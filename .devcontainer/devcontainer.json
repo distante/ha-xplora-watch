@@ -1,0 +1,73 @@
+{
+    "name": "xplora_watch",
+    "image": "mcr.microsoft.com/devcontainers/python:3.14",
+    // ffmpeg is a runtime dependency of pydub, which xplora_watch uses to convert downloaded
+    // voice messages to mp3 - without it, run-ha logs a FFmpeg/pydub error+warning on startup.
+    // gitleaks (secret-scan backstop for the pre-commit hook) is a GitHub-release binary
+    // installed into ~/.local/bin by install-gitleaks.sh (postCreate).
+    "onCreateCommand": "sudo apt-get update && sudo apt-get install -y ffmpeg",
+    "postCreateCommand": "scripts/setup && bash .devcontainer/install-gitleaks.sh",
+    "remoteEnv": {
+        "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
+    },
+    "forwardPorts": [
+        8123
+    ],
+    "portsAttributes": {
+        "8123": {
+            "label": "Home Assistant",
+            "onAutoForward": "notify"
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "charliermarsh.ruff",
+                "ms-python.python",
+                "ms-python.vscode-pylance"
+            ],
+            "settings": {
+                "python.testing.pytestArgs": [
+                    "tests"
+                ],
+                "python.testing.unittestEnabled": false,
+                "python.testing.pytestEnabled": true,
+                "python.testing.autoTestDiscoverOnSaveEnabled": false,
+                "python.testing.pytestPath": "pytest",
+                "python.testing.cwd": "${workspaceFolder}",
+                "files.eol": "\n",
+                "editor.tabSize": 4,
+                "editor.formatOnPaste": true,
+                "editor.formatOnSave": true,
+                "editor.formatOnType": false,
+                "files.trimTrailingWhitespace": true,
+                "python.analysis.typeCheckingMode": "basic",
+                "python.analysis.packageIndexDepths": [
+                    {
+                        "name": "homeassistant",
+                        "depth": 1,
+                        "includeAllSymbols": false
+                    }
+                ],
+                "python.analysis.inlayHints.functionReturnTypes": false,
+                "python.analysis.inlayHints.variableTypes": false,
+                "python.analysis.completeFunctionParens": false,
+                "python.defaultInterpreterPath": "/usr/local/bin/python3",
+                "files.watcherExclude": {
+                    "**/__pycache__/**": true,
+                    "**/htmlcov/**": true,
+                    "coverage.json": true,
+                    "coverage.xml": true,
+                    "**/.git/**": true,
+                    "**/.mypy_cache/**": true,
+                    "**/.pytest_cache/**": true,
+                    "**/.ruff_cache/**": true
+                },
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff"
+                }
+            }
+        }
+    },
+    "remoteUser": "vscode"
+}

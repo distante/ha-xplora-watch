@@ -1,0 +1,94 @@
+{
+  "entity": {
+    "button": {
+      "refresh_functions": {
+        "name": "Refresh Alarms & Silent Times"
+      }
+    }
+  },
+  "config": {
+    "abort": {
+      "already_configured": "Integration has already been configured",
+      "cannot_connect": "Connection Failed",
+      "single_instance_allowed": "Already configured. Only one configuration possible."
+    },
+    "create_entry": {
+      "default": "HA Xplora® Watch Integration was created!"
+    },
+    "error": {
+      "cannot_connect": "Connection Failed",
+      "invalid_auth": "Invalid authentication",
+      "pass_invalid": "Wrong password",
+      "phone_email_invalid": "Phone Number or Email address not exist"
+    },
+    "step": {
+      "user": {
+        "menu_options": {
+          "user_email": "sign in with E-mail address",
+          "user_phone": "sign in with Phonenumber (experimental)"
+        }
+      },
+      "user_email": {
+        "data": {
+          "email": "E-mail address",
+          "language": "Language",
+          "password": "Password",
+          "timezone": "Timezone",
+          "userlang": "Watch Language (en)"
+        },
+        "description": "Account Authentication",
+        "title": "Set up HA Xplora® Watch"
+      },
+      "user_phone": {
+        "data": {
+          "country_code": "Countrycode (+49)",
+          "language": "Language",
+          "password": "Password",
+          "phonenumber": "phonenumber without Countrycode",
+          "timezone": "Timezone",
+          "userlang": "Watch Language (en)"
+        },
+        "description": "Account Authentication",
+        "title": "Set up HA Xplora® Watch"
+      }
+    }
+  },
+  "options": {
+    "error": {
+      "api_key_error": "OpenCage API KEY must be specified!",
+      "friendly_name_error": "Friendly Name format not correkt (watch_id=friendly_name)",
+      "no_sensor": "Please select one or more sensors!",
+      "no_watch": "Please select a Watch!"
+    },
+    "step": {
+      "init": {
+        "data": {
+          "auto_fetch_history": "Automatically fetch yesterday's location history",
+          "auto_mark_read": "Mark chat messages as read while polling",
+          "history_retention_days": "Location history retention (days)",
+          "home_is_safezone": "Home is Safezone",
+          "home_latitude": "Home latitude",
+          "home_longitude": "Home longitude",
+          "home_radius": "Home radius",
+          "language": "Language",
+          "maps": "Maps",
+          "message": "Number of Messages",
+          "opencage_apikey": "OpenCage API KEY",
+          "refresh_on_card_render": "Refresh data when dashboard cards are shown",
+          "remove_message": "show deleted messages?",
+          "scan_interval": "Update interval (Off disables polling)",
+          "scan_interval_functions": "Functions update interval (alarms, silent times, safe zones)",
+          "watches": "Watches"
+        },
+        "data_description": {
+          "history_retention_days": "How long the optional location-history sensor keeps past positions. Home Assistant retains far more than the Xplora® app's ~3-day window. Only matters once you enable the location-history sensor.",
+          "scan_interval": "How often Home Assistant polls the watches for battery, location and status. Off (the default) disables automatic polling — updates then come only from the xplora_watch.see service or pressing the Update button.",
+          "scan_interval_functions": "How often the rarely-changing alarms, silent times and safe-zone definitions are fetched. Each needs a separate request per watch, so this is Off by default to minimise traffic. Choose 'With every poll' to refresh them on each update, or fetch them on demand with the xplora_watch.refresh_functions service or by tapping the count tiles on the card.",
+          "auto_fetch_history": "When on, the integration fetches the previous day's location track at 01:00 local time — only if that day's data is not already cached. Useful if you want a growing location archive without setting up your own automation calling xplora_watch.fetch_history daily.",
+          "refresh_on_card_render": "When on, the custom dashboard cards request fresh data as soon as they are shown (alarms and silent times, location, and chat). Off by default to minimise API traffic; when several cards in one view show the same watch, each data set is refreshed only once."
+        },
+        "title": "further settings for HA Xplora® Watch"
+      }
+    }
+  }
+}

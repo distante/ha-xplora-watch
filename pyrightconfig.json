@@ -1,0 +1,20 @@
+{
+    "exclude": [
+        "**/homeassistant/components/**",
+        "**/site-packages/homeassistant/**",
+        "htmlcov/**",
+        "**/__pycache__/**",
+        "coverage.json",
+        "**/node_modules",
+        "**/.mypy_cache/**",
+        "**/.pytest_cache/**",
+        "**/.ruff_cache/**"
+    ],
+    "useLibraryCodeForTypes": false,
+    "autoImportCompletions": false,
+    "indexing": true,
+    "reportMissingModuleSource": false,
+    "ignore": [
+        "**/homeassistant/**"
+    ]
+}

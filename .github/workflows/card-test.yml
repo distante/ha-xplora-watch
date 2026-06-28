@@ -1,0 +1,48 @@
+# Runs the Lovelace card test suite (vitest + jsdom) over
+# custom_components/xplora_watch/www/xplora-watch-card.js. Separate from the Python `Tests`
+# workflow; only triggers when card-related files change.
+name: Card Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "custom_components/xplora_watch/www/**"
+      - "tests/card/**"
+      - "package.json"
+      - "vitest.config.mjs"
+      - ".github/workflows/card-test.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "custom_components/xplora_watch/www/**"
+      - "tests/card/**"
+      - "package.json"
+      - "vitest.config.mjs"
+      - ".github/workflows/card-test.yml"
+
+jobs:
+  card-test:
+    name: Lovelace card tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+
+      # NOTE: pin to a commit SHA (like the other workflows) once you settle on a version.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # --ignore-scripts: skip package lifecycle scripts during install (none are needed to run the
+      # card tests, and skipping them avoids any unexpected native-binary build steps).
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run card tests
+        run: npm run test:card

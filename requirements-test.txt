@@ -1,0 +1,18 @@
+#! Test requirements for Xplora® Watch
+
+# Constrain test dependencies to the committed runtime lock.
+-c requirements-lock.txt
+
+# Core test dependencies (pinned to match pytest-homeassistant-custom-component's own pins)
+pytest==9.0.3
+pytest-asyncio==1.3.0
+pytest-cov==7.1.0
+
+# Mocks aiohttp/GraphQL transport calls in xplora_watch tests without hitting the network
+aioresponses==0.7.8
+
+# Home Assistant testing dependencies
+pytest-homeassistant-custom-component==0.13.340
+
+# Static type checking
+mypy==1.20.0

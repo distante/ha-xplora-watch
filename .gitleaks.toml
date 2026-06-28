@@ -1,0 +1,7 @@
+# gitleaks config for this repo. Extends the built-in default ruleset.
+#
+# Run manually:  gitleaks git --staged --redact -c .gitleaks.toml
+# See .githooks/README.md.
+
+[extend]
+useDefault = true

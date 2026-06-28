@@ -1,0 +1,93 @@
+{
+  "entity": {
+    "button": {
+      "refresh_functions": {
+        "name": "Actualizar alarmas y tiempos de silencio"
+      }
+    }
+  },
+  "config": {
+    "abort": {
+      "already_configured": "La integración ya ha sido configurada",
+      "single_instance_allowed": "Ya configurado. Solo se permite una configuración."
+    },
+    "create_entry": {
+      "default": "¡Se creó la integración de HA Xplora® Watch!"
+    },
+    "error": {
+      "cannot_connect": "Fallo en la conexión",
+      "invalid_auth": "Autenticación inválida",
+      "pass_invalid": "Contraseña incorrecta",
+      "phone_email_invalid": "El número de teléfono o dirección de correo electrónico no existen"
+    },
+    "step": {
+      "user": {
+        "menu_options": {
+          "user_email": "iniciar sesión con dirección de correo electrónico",
+          "user_phone": "iniciar sesión con número de teléfono (experimental)"
+        }
+      },
+      "user_email": {
+        "data": {
+          "email": "Dirección de correo electrónico",
+          "language": "Idioma",
+          "password": "Contraseña",
+          "timezone": "Zona horaria",
+          "userlang": "Idioma del reloj (es)"
+        },
+        "description": "Autenticación de cuenta",
+        "title": "Configurar HA Xplora® Watch"
+      },
+      "user_phone": {
+        "data": {
+          "country_code": "Código de país (+49)",
+          "language": "Idioma",
+          "password": "Contraseña",
+          "phonenumber": "número de teléfono sin código de país",
+          "timezone": "Zona horaria",
+          "userlang": "Idioma del reloj (es)"
+        },
+        "description": "Autenticación de cuenta",
+        "title": "Configurar HA Xplora® Watch"
+      }
+    }
+  },
+  "options": {
+    "error": {
+      "api_key_error": "¡Se debe especificar la clave API de OpenCage!",
+      "friendly_name_error": "Formato de nombre amigable incorrecto (watch_id=nombre_amigable)",
+      "no_sensor": "¡Por favor seleccione uno o más sensores!",
+      "no_watch": "¡Por favor seleccione un reloj!"
+    },
+    "step": {
+      "init": {
+        "data": {
+          "auto_fetch_history": "Obtener automáticamente el historial de ubicación de ayer",
+          "auto_mark_read": "Marcar los mensajes de chat como leídos al sondear",
+          "history_retention_days": "Retención del historial de ubicaciones (días)",
+          "home_is_safezone": "El hogar es una zona segura",
+          "home_latitude": "Latitud del hogar",
+          "home_longitude": "Longitud del hogar",
+          "home_radius": "Radio del hogar",
+          "language": "Idioma",
+          "maps": "Mapas",
+          "message": "Número de mensajes",
+          "opencage_apikey": "Clave API de OpenCage",
+          "refresh_on_card_render": "Actualizar datos al mostrar las tarjetas del panel",
+          "remove_message": "¿mostrar mensajes eliminados?",
+          "scan_interval": "Intervalo de actualización (Desactivado detiene el sondeo)",
+          "scan_interval_functions": "Intervalo de actualización de funciones (alarmas, tiempos de silencio, zonas seguras)",
+          "watches": "Relojes"
+        },
+        "data_description": {
+          "history_retention_days": "Cuánto tiempo conserva el sensor opcional de historial de ubicaciones las posiciones pasadas. Home Assistant retiene mucho más que la ventana de ~3 días de la app Xplora®. Solo importa una vez que actives el sensor de historial de ubicaciones.",
+          "scan_interval": "Con qué frecuencia Home Assistant consulta los relojes para batería, ubicación y estado. Desactivado (predeterminado) detiene el sondeo automático — las actualizaciones llegan entonces solo desde el servicio xplora_watch.see o al pulsar el botón Actualizar.",
+          "scan_interval_functions": "Con qué frecuencia se obtienen las alarmas, los tiempos de silencio y las zonas seguras, que rara vez cambian. Cada una requiere una petición por reloj, por lo que está Desactivado de forma predeterminada para minimizar el tráfico. Elige «En cada sondeo» para actualizarlas en cada actualización, u obtenlas cuando quieras con el servicio xplora_watch.refresh_functions o tocando las casillas de recuento en la tarjeta.",
+          "auto_fetch_history": "Cuando está activado, la integración obtiene el historial de ubicaciones del día anterior a la 01:00 (hora local) — solo si los datos de ese día aún no están en caché. Útil para mantener un archivo de ubicaciones sin necesidad de configurar una automatización propia con xplora_watch.fetch_history.",
+          "refresh_on_card_render": "Cuando está activado, las tarjetas personalizadas del panel solicitan datos actualizados en cuanto se muestran (alarmas y tiempos de silencio, ubicación y chat). Desactivado de forma predeterminada para minimizar el tráfico; si varias tarjetas de una vista muestran el mismo reloj, cada conjunto de datos se actualiza solo una vez."
+        },
+        "title": "configuraciones adicionales para HA Xplora® Watch"
+      }
+    }
+  }
+}

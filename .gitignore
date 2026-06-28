@@ -1,0 +1,36 @@
+# artifacts
+__pycache__
+.pytest*
+*.egg-info
+*/build/*
+*/dist/*
+
+
+# misc
+.coverage
+coverage.xml
+coverage.json
+.ruff_cache
+.DS_Store
+
+# VS Code - exclude personal settings but include project settings
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/*.code-workspace
+.vscode/settings.local.json
+
+# Claude Code - machine-specific settings (absolute paths differ per environment)
+.claude/settings.local.json
+
+
+# Home Assistant configuration
+config/*
+!config/configuration.yaml
+!config/.HA_VERSION
+
+node_modules
+
+# helper.create_service_yaml_file() overwrites this in-place with real account data (watch ids,
+# usernames) every time the integration starts. Never commit; create_service_yaml_file() regenerates
+# it on first run if missing.
+custom_components/xplora_watch/services.yaml
