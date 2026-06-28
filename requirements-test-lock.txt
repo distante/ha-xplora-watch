@@ -292,6 +292,10 @@ async-interrupt==1.2.2 \
     #   -c requirements-lock.txt
     #   habluetooth
     #   homeassistant
+async-timeout==5.0.1 \
+    --hash=sha256:39e3809566ff85354557ec2398b55e096c8364bacac9405a7a1fa429e77fe76c \
+    --hash=sha256:d9321a7a3d5a6a5e187e824d2fa0793ce379a202935782d555d6e9d2735677d3
+    # via ha-ffmpeg
 atomicwrites-homeassistant==1.4.1 \
     --hash=sha256:01457de800961db7d5b575f3c92e7fb56e435d88512c366afb0873f4f092bb0d \
     --hash=sha256:256a672106f16745445228d966240b77b55f46a096d20305901a57aa5d1f4c2f
@@ -1380,6 +1384,10 @@ h11==0.16.0 \
     # via
     #   -c requirements-lock.txt
     #   httpcore
+ha-ffmpeg==3.2.2 \
+    --hash=sha256:4fd4a4f4cdaf3243d2737942f3f41f141e4437d2af1167655815dc03283b1652 \
+    --hash=sha256:80e4a77b3eda73df456ec9cc3295a898ed7cbb8cd2d59798f10e8c10a8e6c401
+    # via -r requirements-test.txt
 habluetooth==6.10.0 \
     --hash=sha256:02df7ac1679cccc1134f3890959db9463a956fd67432792b99e9aa3dae8835e2 \
     --hash=sha256:08ff37612a4c2c7c32e5709ae29f9f47dab2bd057a7e5364fdb56529196800ff \

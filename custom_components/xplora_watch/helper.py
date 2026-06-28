@@ -266,7 +266,18 @@ async def encoded_base64_string_to_mp3_file(hass: HomeAssistant, base64_string: 
 
     await hass.async_add_executor_job(_write_amr)
     try:
-        ffmpeg_binary = get_ffmpeg_manager(hass).binary
+        try:
+            ffmpeg_binary = get_ffmpeg_manager(hass).binary
+        except KeyError, ValueError:
+            # The `ffmpeg` integration isn't set up (it's an `after_dependency`, not forced). Most
+            # installs get it via `default_config`; on a minimal one the user must add `ffmpeg:` to
+            # configuration.yaml. Skip gracefully rather than crash the read.
+            _LOGGER.warning(
+                "Home Assistant's ffmpeg integration is not set up, so voice message %s can't be "
+                "converted to mp3. Enable it via `default_config:` or add `ffmpeg:` to configuration.yaml.",
+                file_name,
+            )
+            return
         proc = await asyncio.create_subprocess_exec(
             ffmpeg_binary,
             "-y",

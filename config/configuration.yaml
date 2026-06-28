@@ -4,6 +4,9 @@
 # default_config's integrations explicitly instead.
 cloud:
 energy:
+# Part of default_config; xplora_watch uses it (an after_dependency) to convert AMR voice messages
+# to mp3, so it must be loaded here for that path to work in this explicit-integrations dev config.
+ffmpeg:
 file:
 history:
 homeassistant_alerts:

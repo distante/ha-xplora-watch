@@ -1,9 +1,10 @@
 {
   "domain": "xplora_watch",
   "name": "HA Xplora® Watch",
+  "after_dependencies": ["ffmpeg"],
   "codeowners": ["@distante"],
   "config_flow": true,
-  "dependencies": ["http", "websocket_api", "ffmpeg"],
+  "dependencies": ["http", "websocket_api"],
   "documentation": "https://github.com/distante/ha-xplora-watch/tree/main",
   "integration_type": "device",
   "iot_class": "cloud_polling",
@@ -17,5 +18,5 @@
     "dataclasses-json>=0.6",
     "security>=1.2"
   ],
-  "version": "v1.0.1"
+  "version": "v1.0.2"
 }

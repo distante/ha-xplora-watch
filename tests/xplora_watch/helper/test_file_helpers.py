@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.xplora_watch.helper import (
@@ -87,6 +89,33 @@ async def test_encoded_base64_string_to_mp3_file_converts_and_cleans_up_amr(hass
     assert mock_exec.await_args.args == ("ffmpeg", "-y", "-i", amr_path, mp3_path)
     # The intermediate .amr is cleaned up; the real .amr was written then removed.
     assert not os.path.exists(amr_path)
+
+
+async def test_encoded_base64_string_to_mp3_file_skips_when_ffmpeg_not_set_up(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """If the ffmpeg integration isn't set up, get_ffmpeg_manager raises -> skip gracefully.
+
+    No subprocess is spawned, a warning is logged, and the intermediate .amr is still cleaned up.
+    """
+    media_path = hass.config.path("www/voice")
+    os.makedirs(media_path, exist_ok=True)
+    payload = base64.b64encode(b"fake-amr-bytes").decode()
+    amr_path = f"{media_path}/voice3.amr"
+
+    with (
+        patch(
+            "custom_components.xplora_watch.helper.get_ffmpeg_manager",
+            side_effect=ValueError("ffmpeg component not initialized"),
+        ),
+        patch("custom_components.xplora_watch.helper.asyncio.create_subprocess_exec", new=AsyncMock()) as mock_exec,
+        caplog.at_level(logging.WARNING, logger="custom_components.xplora_watch.helper"),
+    ):
+        await encoded_base64_string_to_mp3_file(hass, payload, "voice3")
+
+    mock_exec.assert_not_awaited()  # never tried to run ffmpeg
+    assert not os.path.exists(amr_path)  # intermediate cleaned up
+    assert "ffmpeg integration is not set up" in caplog.text
 
 
 async def test_encoded_base64_string_to_mp3_file_skips_if_mp3_exists(hass: HomeAssistant) -> None:
