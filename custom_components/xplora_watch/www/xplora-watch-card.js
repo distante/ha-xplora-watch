@@ -112,6 +112,12 @@ function refreshOnRenderEnabled(stateObj) {
 // suppressed.
 const _refreshDedup = new Map();
 const REFRESH_DEDUP_TTL_MS = 15000;
+// Safety net for `_refresh`: if a `read_message` service call never settles (e.g. a dropped
+// websocket reply), re-enable the refresh button after this long so it can't stay wedged forever.
+const REFRESH_WATCHDOG_MS = 30000;
+// Keep the refresh spinner visible for at least this long. A cached/demo read can return in a few
+// ms -- without a floor the spinner flashes too briefly to be seen, so the click gives no feedback.
+const MIN_REFRESH_SPIN_MS = 500;
 
 function fireDeduped(key, fn) {
   const now = Date.now();
@@ -3000,11 +3006,26 @@ class XploraWatchChatCard extends HTMLElement {
     if (!a.wuid || !a.entry_id) return;
     this._refreshing = true;
     this._syncControls();
+    // Watchdog: a `callService` promise that never settles would otherwise leave `_refreshing`
+    // stuck `true` -- the button disabled and every later click dropped by the guard above. Clear
+    // the flag after a timeout so the user can retry even if the call is wedged.
+    let settled = false;
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      this._refreshing = false;
+      this._syncControls();
+    }, REFRESH_WATCHDOG_MS);
+    const startedAt = Date.now();
     try {
       await this._hass.callService(DOMAIN, CHAT_SERVICE.READ, this._base(), undefined, false);
     } catch (err) {
       this._notify(`Xplora watch: ${err && err.message ? err.message : "could not read messages"}`);
     } finally {
+      settled = true;
+      clearTimeout(watchdog);
+      // Hold the spinner for a perceptible minimum so an instant (cached) read still shows feedback.
+      const remaining = MIN_REFRESH_SPIN_MS - (Date.now() - startedAt);
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
       this._refreshing = false;
       this._syncControls();
     }

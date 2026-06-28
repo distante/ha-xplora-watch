@@ -662,7 +662,7 @@ class XploraMessageSensorUpdateService(XploraService):
             return
         voice = await self.coordinator._with_recovery(lambda: self.coordinator.controller.get_chat_voice(watch_id, msg_id))
         if voice:
-            encoded_base64_string_to_mp3_file(self._hass, voice, msg_id)
+            await encoded_base64_string_to_mp3_file(self._hass, voice, msg_id)
 
     async def _fetch_chat_short_video(self, watch_id: str, msg_id: str) -> None:
         # Skip the remote fetch only once BOTH the video and its thumbnail are cached.
@@ -670,10 +670,10 @@ class XploraMessageSensorUpdateService(XploraService):
             return
         video = await self.coordinator._with_recovery(lambda: self.coordinator.controller.get_short_video(watch_id, msg_id))
         if video:
-            encoded_base64_string_to_file(self._hass, video, msg_id, "mp4", "video")
+            await encoded_base64_string_to_file(self._hass, video, msg_id, "mp4", "video")
         thumb = await self.coordinator._with_recovery(lambda: self.coordinator.controller.get_short_video_cover(watch_id, msg_id))
         if thumb:
-            encoded_base64_string_to_file(self._hass, thumb, msg_id, "jpeg", "video/thumb")
+            await encoded_base64_string_to_file(self._hass, thumb, msg_id, "jpeg", "video/thumb")
 
     async def _fetch_chat_image(self, watch: str, msg_id: str) -> None:
         # Already downloaded -> skip the remote (rate-limited) fetch and serve the cached file.
@@ -681,7 +681,7 @@ class XploraMessageSensorUpdateService(XploraService):
             return
         image = await self.coordinator._with_recovery(lambda: self.coordinator.controller.get_chat_image(watch, msg_id))
         if image:
-            encoded_base64_string_to_file(self._hass, image, msg_id, "jpeg", "image")
+            await encoded_base64_string_to_file(self._hass, image, msg_id, "jpeg", "image")
 
 
 class XploraShutdownService(XploraService):

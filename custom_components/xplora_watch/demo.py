@@ -22,6 +22,7 @@ import time
 from typing import Any, Final
 
 from .const import DEMO_ACCOUNT_EMAIL
+from .demo_voice import DEMO_VOICE_AMR_B64
 from .pyxplora_api.const import ALL_WATCH_FUNCTIONS, WatchFunction
 from .pyxplora_api.model import ChatsNew, Data, SimpleChat, User
 from .pyxplora_api.pyxplora_api_async import FetchError, PyXploraApi, TokenRefreshOutcome
@@ -45,6 +46,9 @@ DEMO_XCOIN: Final = 120
 # form, so the "already migrated, skip" check would never fire -- silently re-appending this id
 # to every entity's unique_id on every reload instead of being a no-op.
 DEMO_USER_ID: Final = "demo_parent_account"
+# msgId of the synthetic VOICE chat message; `get_chat_voice` returns the bundled AMR sample for
+# it so reading the demo chat exercises the real AMR->mp3 conversion end to end.
+DEMO_VOICE_MSG_ID: Final = "demo-msg-3"
 
 
 def is_demo_account(email: str | None) -> bool:
@@ -228,7 +232,9 @@ class DemoPyXploraApi(PyXploraApi):
         }
 
     async def getWatchChatsRaw(self, wuid: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        """Two demo chat messages, so the message card has something to render."""
+        """Three demo chat messages (two text + one voice), so the message card has something to
+        render and the voice->mp3 conversion path can be exercised end to end (see `get_chat_voice`).
+        """
         now = int(time.time())
         chats = ChatsNew(
             [
@@ -251,6 +257,16 @@ class DemoPyXploraApi(PyXploraApi):
                     data=Data(tm=now - 3000, sender_name="Demo Parent", text="Have fun! Pick you up at 5."),
                     create=now - 3000,
                     type=ChatType.TEXT.value,
+                ),
+                SimpleChat(
+                    id=DEMO_VOICE_MSG_ID,
+                    msgId=DEMO_VOICE_MSG_ID,
+                    readFlag=0,
+                    sender=User(id=DEMO_WUID, userId=DEMO_WUID, name=DEMO_CHILD_NAME),
+                    receiver=User(id=DEMO_USER_ID, userId=DEMO_USER_ID, name="Demo Parent"),
+                    data=Data(tm=now - 2400, sender_name=DEMO_CHILD_NAME),
+                    create=now - 2400,
+                    type=ChatType.VOICE.value,
                 ),
             ]
         )
@@ -302,8 +318,12 @@ class DemoPyXploraApi(PyXploraApi):
         return True
 
     async def get_chat_voice(self, wuid: str, msgId: str) -> str | None:
-        """No demo media files."""
-        return None
+        """Return the bundled AMR sample (base64) for the demo voice message, else nothing.
+
+        Mirrors the real API, which hands back the voice payload as a base64 string; the caller
+        decodes it, writes the `.amr`, and transcodes it to mp3 via ffmpeg.
+        """
+        return DEMO_VOICE_AMR_B64 if msgId == DEMO_VOICE_MSG_ID else None
 
     async def get_chat_image(self, wuid: str, msgId: str) -> str | None:
         """No demo media files."""

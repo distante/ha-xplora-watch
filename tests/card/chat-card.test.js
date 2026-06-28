@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { bubbleRows, bubbleTexts, chat, loadBundle, makeHass, mountChat } from "./helpers.js";
 
@@ -98,6 +98,62 @@ describe("refresh button", () => {
 
     // The service call is issued synchronously before the await, so it's recorded immediately.
     expect(calls).toContainEqual(["xplora_watch", "read_message", { target: ["watch1"], user: ["entry1"] }, undefined, false]);
+  });
+
+  it("recovers from a service call that never settles so the button isn't wedged forever", () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      // A callService that never resolves: without the watchdog, `_refreshing` would stay true and
+      // every subsequent click would be dropped by the guard.
+      const el = mountChat([chat("m1", { text: "hi" })], {
+        callService: () => {
+          calls += 1;
+          return new Promise(() => {});
+        },
+      });
+
+      const btn = el.shadowRoot.querySelector(".refresh-btn");
+      const icon = btn.querySelector("ha-icon");
+      btn.click();
+      expect(calls).toBe(1);
+      expect(el._refreshing).toBe(true); // in flight -> button disabled, further clicks ignored
+      expect(icon.classList.contains("spin")).toBe(true); // spinner visible while refreshing
+      btn.click();
+      expect(calls).toBe(1); // suppressed while refreshing
+
+      // The watchdog fires and re-enables the control even though the call never settled.
+      vi.advanceTimersByTime(30000);
+      expect(el._refreshing).toBe(false);
+      expect(icon.classList.contains("spin")).toBe(false); // spinner cleared
+
+      btn.click();
+      expect(calls).toBe(2); // a retry now goes through
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the spinner visible for a minimum even when the read returns instantly", async () => {
+    vi.useFakeTimers();
+    try {
+      // A read that resolves immediately (e.g. cached/demo data) would otherwise flash the spinner
+      // for a few ms -- imperceptible. The min-duration floor keeps it visible.
+      const el = mountChat([chat("m1", { text: "hi" })], { callService: async () => {} });
+      const btn = el.shadowRoot.querySelector(".refresh-btn");
+      const icon = btn.querySelector("ha-icon");
+
+      btn.click();
+      await vi.advanceTimersByTimeAsync(0); // let the instant call resolve; the floor kicks in
+      expect(el._refreshing).toBe(true);
+      expect(icon.classList.contains("spin")).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(500); // floor elapses
+      expect(el._refreshing).toBe(false);
+      expect(icon.classList.contains("spin")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

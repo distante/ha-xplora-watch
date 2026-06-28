@@ -3,7 +3,7 @@
   "name": "HA Xplora® Watch",
   "codeowners": ["@distante"],
   "config_flow": true,
-  "dependencies": ["http", "websocket_api"],
+  "dependencies": ["http", "websocket_api", "ffmpeg"],
   "documentation": "https://github.com/distante/ha-xplora-watch/tree/main",
   "integration_type": "device",
   "iot_class": "cloud_polling",
@@ -15,7 +15,6 @@
     "aiohttp>=3.12",
     "geopy>=2.4",
     "dataclasses-json>=0.6",
-    "pydub",
     "security>=1.2"
   ],
   "version": "v1.0.0"

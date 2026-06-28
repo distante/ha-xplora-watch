@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -12,13 +13,13 @@ from typing import TYPE_CHECKING, Any
 import aiofiles
 import aiohttp
 from geopy import distance
+from homeassistant.components.ffmpeg import get_ffmpeg_manager
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util.yaml.dumper import dump
 from homeassistant.util.yaml.loader import JSON_TYPE, Secrets, parse_yaml
-from pydub import AudioSegment
 
 from .config import resolve_language
 from .const import (
@@ -43,6 +44,7 @@ from .const import (
     ATTR_SERVICE_UPDATE_ALARM,
     ATTR_SERVICE_UPDATE_SILENT,
     DATA_FRONTEND_REGISTERED,
+    DATA_MEDIA_PATHS_REGISTERED,
     DAYS,
     DEFAULT_LANGUAGE,
     DOMAIN,
@@ -223,29 +225,63 @@ def chat_media_cached(hass: HomeAssistant, file_name: str, file_type: str, file_
     return os.path.exists(hass.config.path(f"www/{file_dir}/{file_name}.{file_type}"))
 
 
-def encoded_base64_string_to_file(hass: HomeAssistant, base64_string: str, file_name: str, file_type: str, file_dir: str) -> None:
-    """Convert base64 encoded string to file."""
-    media_path = hass.config.path(f"www/{file_dir}")
-    if not os.path.exists(f"{media_path}/{file_name}.{file_type}"):
-        try:
-            decoded_data = base64.b64decode(base64_string.encode())
-            with open(f"{media_path}/{file_name}.{file_type}", "wb") as f:
-                f.write(decoded_data)
-        except AttributeError:
-            return
+async def encoded_base64_string_to_file(hass: HomeAssistant, base64_string: str, file_name: str, file_type: str, file_dir: str) -> None:
+    """Convert a base64-encoded string to a cached file under `www/{file_dir}/`.
 
-
-def encoded_base64_string_to_mp3_file(hass: HomeAssistant, base64_string: str, file_name: str) -> None:
-    """Convert base64 encoded string to mp3 file."""
-    media_path = hass.config.path("www/voice")
-    if not os.path.exists(f"{media_path}/{file_name}.mp3"):
+    The write runs in the executor so a large attachment (image/video) can't block the event loop.
+    """
+    target = hass.config.path(f"www/{file_dir}/{file_name}.{file_type}")
+    if os.path.exists(target):
+        return
+    try:
         decoded_data = base64.b64decode(base64_string.encode())
-        with open(f"{media_path}/{file_name}.amr", "wb") as f:
+    except AttributeError:
+        # `base64_string` wasn't a string (e.g. None when the remote fetch failed) -> nothing to write.
+        return
+
+    def _write() -> None:
+        with open(target, "wb") as f:
             f.write(decoded_data)
-        if os.path.exists(f"{media_path}/{file_name}.amr"):
-            sound = AudioSegment.from_file(f"{media_path}/{file_name}.amr", format="amr")
-            sound.export(f"{media_path}/{file_name}.mp3", format="mp3")
-            os.remove(f"{media_path}/{file_name}.amr")
+
+    await hass.async_add_executor_job(_write)
+
+
+async def encoded_base64_string_to_mp3_file(hass: HomeAssistant, base64_string: str, file_name: str) -> None:
+    """Convert a base64-encoded AMR voice message to an mp3 file.
+
+    The conversion runs Home Assistant's configured ffmpeg binary in a subprocess (ffmpeg decodes
+    AMR natively), off the event loop -- the watch returns voice messages as AMR, which browsers
+    can't play, so we transcode to mp3 once and cache the result under `www/voice/`.
+    """
+    media_path = hass.config.path("www/voice")
+    mp3_path = f"{media_path}/{file_name}.mp3"
+    if os.path.exists(mp3_path):
+        return
+    amr_path = f"{media_path}/{file_name}.amr"
+    decoded_data = base64.b64decode(base64_string.encode())
+
+    def _write_amr() -> None:
+        with open(amr_path, "wb") as f:
+            f.write(decoded_data)
+
+    await hass.async_add_executor_job(_write_amr)
+    try:
+        ffmpeg_binary = get_ffmpeg_manager(hass).binary
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg_binary,
+            "-y",
+            "-i",
+            amr_path,
+            mp3_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            _LOGGER.error("ffmpeg failed converting %s (exit %s): %s", amr_path, proc.returncode, stderr.decode("utf-8", "replace"))
+    finally:
+        if os.path.exists(amr_path):
+            await hass.async_add_executor_job(os.remove, amr_path)
 
 
 async def download_image_to_file(hass: HomeAssistant, session: aiohttp.ClientSession, url: str, file_name: str) -> bool:
@@ -279,7 +315,15 @@ async def download_image_to_file(hass: HomeAssistant, session: aiohttp.ClientSes
 
 
 async def create_www_directory(hass: HomeAssistant) -> None:
-    """Create www directory."""
+    """Create the `www` media directories and make sure they are served under `/local`.
+
+    Home Assistant registers the `/local` static route (-> `config/www`) at startup *only* if that
+    directory already exists then (frontend sets it up conditionally). These directories are created
+    here, during entry setup, which runs after startup -- so on a fresh install `/local` is never
+    wired up and the cached media below would 404 until the next restart. Registering the media
+    sub-paths ourselves (the same self-service approach the bundled card uses) serves them
+    regardless; it is idempotent across entries via `DATA_MEDIA_PATHS_REGISTERED`.
+    """
     paths = [
         hass.config.path("www"),  # http://homeassistant.local:8123/local
         hass.config.path("www/image"),  # http://homeassistant.local:8123/local/image/<filename>.jpeg
@@ -297,6 +341,27 @@ async def create_www_directory(hass: HomeAssistant) -> None:
                 os.makedirs(path, exist_ok=True)
 
     await hass.async_add_executor_job(mkdir)
+
+    # Wire up serving for the just-created media dirs. Register the specific sub-paths rather than
+    # `/local` itself: when `config/www` *did* exist at startup, frontend already mapped `/local`,
+    # and re-registering it would clash -- the narrower prefixes never collide and are simply
+    # redundant in that case. `www/video` covers `www/video/thumb` (StaticResource serves subdirs).
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if domain_data.get(DATA_MEDIA_PATHS_REGISTERED) or getattr(hass, "http", None) is None:
+        return
+    from homeassistant.components.http import StaticPathConfig
+
+    media_paths = [
+        StaticPathConfig("/local/image", hass.config.path("www/image"), False),
+        StaticPathConfig("/local/video", hass.config.path("www/video"), False),
+        StaticPathConfig("/local/voice", hass.config.path("www/voice"), False),
+    ]
+    try:
+        await hass.http.async_register_static_paths(media_paths)
+    except (RuntimeError, ValueError) as err:
+        # Already registered (e.g. by a reload after the routes outlived the unload). Harmless.
+        _LOGGER.debug("Media static paths already registered (%s)", err)
+    domain_data[DATA_MEDIA_PATHS_REGISTERED] = True
 
 
 async def load_yaml(fname: str | os.PathLike[str], secrets: Secrets | None = None) -> JSON_TYPE | None:
@@ -377,6 +442,16 @@ async def create_service_yaml_file(hass: HomeAssistant, entry: ConfigEntry, watc
                     normalized[opt] = label_of(opt)
             return normalized
 
+        def select_options(field: dict[str, Any]) -> list[Any]:
+            """Existing options of a field's select selector; [] if it isn't a select selector yet.
+
+            Old or hand-written `services.yaml` files (and the shipped stub) may declare `user` as a
+            plain `text` selector with no `select` key. Reading defensively -- and always writing the
+            selector back as a `select` below -- converts those into the dropdown we expect instead
+            of raising KeyError.
+            """
+            return ((field.get("selector") or {}).get("select") or {}).get("options") or []
+
         def set_watches(configurations: dict[str, Any], names: list[str], watches: list[str]) -> dict[str, Any]:
             """Set the watches for the configuration."""
             for name in names:
@@ -393,22 +468,24 @@ async def create_service_yaml_file(hass: HomeAssistant, entry: ConfigEntry, watc
                     # Normalize whatever is already there -- the template's plain `"all"` string,
                     # or {value,label} dicts written by an earlier run / another config entry --
                     # into a value->label map so watches accumulate across entries, deduped by id.
-                    target_options = normalize_options(fields["target"]["selector"]["select"]["options"], lambda v: v)
+                    target_options = normalize_options(select_options(fields["target"]), lambda v: v)
                     for wuid in watches:
                         target_options[wuid] = watch_user_label(coordinator.controller, wuid)
-                    fields["target"]["selector"]["select"]["options"] = [
-                        {"value": value, "label": label} for value, label in sorted(target_options.items(), reverse=True)
-                    ]
+                    fields["target"]["selector"] = {
+                        "select": {
+                            "options": [{"value": value, "label": label} for value, label in sorted(target_options.items(), reverse=True)]
+                        }
+                    }
 
                 # Same idea for the user selector: keep other entries' users, drop any stale
                 # entry for this username, then (re)add this account -- all as {value,label} dicts
                 # so the dropdown shows just the username.
-                user_options = normalize_options(fields["user"]["selector"]["select"]["options"], user_label)
+                user_options = normalize_options(select_options(fields["user"]), user_label)
                 user_options = {value: label for value, label in user_options.items() if username not in value}
                 user_options[user_value] = username
-                fields["user"]["selector"]["select"]["options"] = [
-                    {"value": value, "label": label} for value, label in sorted(user_options.items())
-                ]
+                fields["user"]["selector"] = {
+                    "select": {"options": [{"value": value, "label": label} for value, label in sorted(user_options.items())]}
+                }
             return configurations
 
         configuration = set_watches(

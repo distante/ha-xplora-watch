@@ -29,7 +29,8 @@ create_alarm:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
     weekdays:
       description: Days of the week the entry repeats on.
       name: Repeat days
@@ -81,7 +82,8 @@ create_silent:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
     weekdays:
       description: Days of the week the entry repeats on.
       name: Repeat days
@@ -127,7 +129,8 @@ delete_alarm:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Delete alarm
 delete_message_from_app:
   description: Delete message in the Xplora® app.
@@ -152,7 +155,8 @@ delete_message_from_app:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Delete Message
 delete_silent:
   description: Delete a silent-time window from the watch.
@@ -176,7 +180,8 @@ delete_silent:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Delete silent time
 fetch_history:
   description: 'Fetch and cache a past day''s location history (default: yesterday).
@@ -203,7 +208,8 @@ fetch_history:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Fetch location history (day)
 logout:
   description: 'Log out the account: invalidate the current session token on Xplora''s
@@ -214,7 +220,8 @@ logout:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Log Out
 read_message:
   description: Read messages from the watch.
@@ -232,7 +239,8 @@ read_message:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Read Messages
 reboot:
   description: Reboot the watch.
@@ -250,7 +258,8 @@ reboot:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Reboot Watch
 refresh_functions:
   description: Refresh alarms, silent times and safe zones from your watch on demand
@@ -269,7 +278,8 @@ refresh_functions:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Refresh alarms/silents/safe zones
 see:
   description: 'Manually refresh the watch''s live status: location, battery, charging,
@@ -291,7 +301,8 @@ see:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Track Watch
 send_message:
   description: Send a notification.
@@ -315,7 +326,8 @@ send_message:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Send Message
 set_alarm_enabled:
   description: Enable or disable an alarm.
@@ -345,7 +357,8 @@ set_alarm_enabled:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Enable/disable alarm
 set_silent_enabled:
   description: Enable or disable a silent-time window.
@@ -375,7 +388,8 @@ set_silent_enabled:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Enable/disable silent time
 shutdown:
   description: Power down the watch.
@@ -393,7 +407,8 @@ shutdown:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Shut Down Watch
 turn_all_alarms_off:
   description: Disable all alarms on the watch(es).
@@ -411,7 +426,8 @@ turn_all_alarms_off:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Disable all alarms
 turn_all_alarms_on:
   description: Enable all alarms on the watch(es).
@@ -429,7 +445,8 @@ turn_all_alarms_on:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Enable all alarms
 turn_all_silents_off:
   description: Disable all silent-time windows on the watch(es).
@@ -447,7 +464,8 @@ turn_all_silents_off:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Disable all silent times
 turn_all_silents_on:
   description: Enable all silent-time windows on the watch(es).
@@ -465,7 +483,8 @@ turn_all_silents_on:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
   name: Enable all silent times
 update_alarm:
   description: Modify an existing alarm's time, repeat days and/or name.
@@ -501,7 +520,8 @@ update_alarm:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
     weekdays:
       description: Days of the week the entry repeats on.
       name: Repeat days
@@ -559,7 +579,8 @@ update_silent:
       name: User
       required: true
       selector:
-        text: null
+        select:
+          options: []
     weekdays:
       description: Days of the week the entry repeats on.
       name: Repeat days

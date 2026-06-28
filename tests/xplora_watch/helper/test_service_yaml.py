@@ -14,11 +14,14 @@ path.
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.xplora_watch import helper as helper_module
 from custom_components.xplora_watch.const import DOMAIN
 from custom_components.xplora_watch.helper import create_service_yaml_file
 
@@ -65,6 +68,31 @@ SAMPLE_CONFIGURATION = {
         }
     },
 }
+
+
+def test_shipped_services_yaml_is_a_clean_stub() -> None:
+    """The committed `services.yaml` must stay a clean static stub.
+
+    The integration regenerates it at runtime with the active account's real watch ids/usernames
+    (`create_service_yaml_file`). Committing that would leak personal data *and* is unnecessary.
+    This asserts every shipped `target` carries only the `all` sentinel and every `user` an empty
+    option list -- guarding against an accidental commit of regenerated data, and guaranteeing a
+    fresh install gets a valid, non-crashing file (each selector is a proper `select`).
+    """
+    path = os.path.join(os.path.dirname(helper_module.__file__), "services.yaml")
+    with open(path, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    for name, body in config.items():
+        fields = body.get("fields", {})
+        if "user" in fields:
+            assert fields["user"]["selector"].get("select", {}).get("options") == [], (
+                f"{name}.user must be an empty select stub -- found account data? regenerated file committed?"
+            )
+        if "target" in fields:
+            assert fields["target"]["selector"].get("select", {}).get("options") == ["all"], (
+                f"{name}.target must be the [all] sentinel stub -- found watch ids? regenerated file committed?"
+            )
 
 
 class _FakeReadFile:
@@ -191,6 +219,39 @@ async def test_create_service_yaml_file_existing_yaml_with_user_field_is_reused(
     # recovered as the label from the legacy plain-string value.
     assert {"value": "existing-entry (Someone)", "label": "Someone"} in users
     assert {"value": f"{mock_config_entry_phone.entry_id} (Parent Name)", "label": "Parent Name"} in users
+
+
+async def test_create_service_yaml_file_text_selector_user_is_converted_to_select(
+    hass, mock_config_entry_phone: MockConfigEntry, fake_coordinator: MagicMock
+) -> None:
+    """A previous/old services.yaml (or the shipped stub) may declare `user` as a *text* selector
+    instead of a *select*. That used to crash set_watches with KeyError: 'select'. It must instead
+    be normalized into a select selector carrying this account as an option.
+    """
+    _install_coordinator(hass, mock_config_entry_phone, fake_coordinator)
+
+    existing_yaml_service = json.loads(json.dumps(SAMPLE_CONFIGURATION))
+    # Mirror the malformed shape: user is a text selector with no "select" key.
+    for service in existing_yaml_service.values():
+        existing_yaml_service_user = service["fields"]["user"]
+        existing_yaml_service_user["selector"] = {"text": None}
+
+    with (
+        patch("custom_components.xplora_watch.helper.aiofiles.open") as mock_open,
+        patch("custom_components.xplora_watch.helper.os.path.exists", return_value=True),
+        patch("custom_components.xplora_watch.helper.load_yaml", new=AsyncMock(return_value=existing_yaml_service)),
+        patch("custom_components.xplora_watch.helper.save_yaml", new=AsyncMock()) as mock_save_yaml,
+    ):
+        mock_open.return_value = _FakeReadFile(json.dumps(SAMPLE_CONFIGURATION))
+
+        await create_service_yaml_file(hass, mock_config_entry_phone, ["watch-id-003"])
+
+    mock_save_yaml.assert_awaited_once()
+    _, saved_config = mock_save_yaml.await_args.args
+    # The text selector is rewritten as a select selector with this account as an option.
+    user_selector = saved_config["see"]["fields"]["user"]["selector"]
+    assert "select" in user_selector
+    assert {"value": f"{mock_config_entry_phone.entry_id} (Parent Name)", "label": "Parent Name"} in user_selector["select"]["options"]
 
 
 async def test_create_service_yaml_file_oserror_is_caught_and_logged(

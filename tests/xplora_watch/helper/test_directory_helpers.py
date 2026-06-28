@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.core import HomeAssistant
 
@@ -32,3 +33,23 @@ async def test_create_www_directory_is_idempotent(hass: HomeAssistant) -> None:
     await create_www_directory(hass)
 
     assert os.path.exists(hass.config.path(f"www/{DOMAIN}"))
+
+
+async def test_create_www_directory_registers_local_media_paths(hass: HomeAssistant) -> None:
+    """The media dirs are exposed under `/local/*` by the integration itself.
+
+    Home Assistant only wires up `/local` at startup when `config/www` already exists, but these
+    dirs are created here (post-startup) -- so on a fresh install the integration must register the
+    media sub-paths or cached voice/image/video would 404 until a restart. Registration is one-time
+    across entries.
+    """
+    fake_http = MagicMock()
+    fake_http.async_register_static_paths = AsyncMock()
+
+    with patch.object(hass, "http", fake_http, create=True):
+        await create_www_directory(hass)
+        await create_www_directory(hass)  # idempotent: must not register a second time
+
+    fake_http.async_register_static_paths.assert_awaited_once()
+    configs = fake_http.async_register_static_paths.await_args.args[0]
+    assert {c.url_path for c in configs} == {"/local/image", "/local/video", "/local/voice"}

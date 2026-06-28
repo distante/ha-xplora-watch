@@ -354,6 +354,12 @@ DATA_HASS_CONFIG: Final = "hass_config"
 FRONTEND_SCRIPT_FILE: Final = "xplora-watch-card.js"
 FRONTEND_SCRIPT_URL: Final = f"/{DOMAIN}_static/{FRONTEND_SCRIPT_FILE}"
 DATA_FRONTEND_REGISTERED: Final = "frontend_card_registered"
+# Home Assistant only wires up the `/local` static route (-> `config/www`) at startup *if* that
+# directory already exists then. The integration creates `config/www/{voice,image,video}` during
+# entry setup -- after startup -- so on a fresh install `/local` is never registered and cached
+# media (voice/image/video) 404s until the next restart. We register those media sub-paths
+# ourselves to serve them regardless; this flag guards the one-time registration across entries.
+DATA_MEDIA_PATHS_REGISTERED: Final = "media_static_paths_registered"
 
 MAPS: Final[list[str]] = ["openstreetmap.org (free)", "opencagedata.com (with Licence)"]
 
