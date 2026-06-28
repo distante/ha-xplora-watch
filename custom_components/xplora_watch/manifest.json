@@ -18,5 +18,5 @@
     "dataclasses-json>=0.6",
     "security>=1.2"
   ],
-  "version": "v1.0.2"
+  "version": "v1.0.3"
 }
