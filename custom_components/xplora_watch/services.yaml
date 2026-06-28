@@ -1,0 +1,585 @@
+# Static service descriptions for hassfest/HACS validation. The integration regenerates this
+# file at runtime with the real per-watch target/user dropdown options
+# (helper.create_service_yaml_file); do not hand-edit the generated values.
+create_alarm:
+  description: Create a new alarm on the watch.
+  fields:
+    name:
+      description: Optional alarm label.
+      name: Name
+      required: false
+      selector:
+        text: null
+    start:
+      description: Start time (HH:MM).
+      name: Start
+      required: true
+      selector:
+        time: null
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+    weekdays:
+      description: Days of the week the entry repeats on.
+      name: Repeat days
+      required: true
+      selector:
+        select:
+          multiple: true
+          options:
+          - label: Monday
+            value: mon
+          - label: Tuesday
+            value: tue
+          - label: Wednesday
+            value: wed
+          - label: Thursday
+            value: thu
+          - label: Friday
+            value: fri
+          - label: Saturday
+            value: sat
+          - label: Sunday
+            value: sun
+  name: Create alarm
+create_silent:
+  description: Create a new silent-time window on the watch.
+  fields:
+    end:
+      description: End time (HH:MM).
+      name: End
+      required: true
+      selector:
+        time: null
+    start:
+      description: Start time (HH:MM).
+      name: Start
+      required: true
+      selector:
+        time: null
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+    weekdays:
+      description: Days of the week the entry repeats on.
+      name: Repeat days
+      required: true
+      selector:
+        select:
+          multiple: true
+          options:
+          - label: Monday
+            value: mon
+          - label: Tuesday
+            value: tue
+          - label: Wednesday
+            value: wed
+          - label: Thursday
+            value: thu
+          - label: Friday
+            value: fri
+          - label: Saturday
+            value: sat
+          - label: Sunday
+            value: sun
+  name: Create silent time
+delete_alarm:
+  description: Delete an alarm from the watch.
+  fields:
+    alarm_id:
+      description: The id of the alarm (see the alarms sensor attributes).
+      name: Alarm ID
+      required: true
+      selector:
+        text: null
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Delete alarm
+delete_message_from_app:
+  description: Delete message in the Xplora® app.
+  fields:
+    message_id:
+      description: Enter the message ID to be deleted in the app; does not affect
+        messages on the watch.
+      name: Message ID
+      required: true
+      selector:
+        text: null
+    target:
+      description: Choose your watch where the message should be deleted.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the user who should delete the message on the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Delete Message
+delete_silent:
+  description: Delete a silent-time window from the watch.
+  fields:
+    silent_id:
+      description: The id of the silent-time window (see the silents sensor attributes).
+      name: Silent ID
+      required: true
+      selector:
+        text: null
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Delete silent time
+fetch_history:
+  description: 'Fetch and cache a past day''s location history (default: yesterday).
+    The watch only serves the last few days, so automate this daily to keep a longer
+    history in Home Assistant.'
+  fields:
+    date:
+      description: Day to fetch as YYYY-MM-DD. Defaults to yesterday. Only the last
+        few days are available from the watch.
+      name: Date
+      required: false
+      selector:
+        text: null
+    target:
+      description: Choose your watch.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Fetch location history (day)
+logout:
+  description: 'Log out the account: invalidate the current session token on Xplora''s
+    servers and force a fresh login on the next update.'
+  fields:
+    user:
+      description: Select the account to log out.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Log Out
+read_message:
+  description: Read messages from the watch.
+  fields:
+    target:
+      description: Choose your watch from which to retrieve the message.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the user from whom the messages should be read.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Read Messages
+reboot:
+  description: Reboot the watch.
+  fields:
+    target:
+      description: Choose your watch to be rebooted.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the user who should reboot the watch (for admins only).
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Reboot Watch
+refresh_functions:
+  description: Refresh alarms, silent times and safe zones from your watch on demand
+    (these have a separate, default-off poll interval).
+  fields:
+    target:
+      description: Choose your watch to refresh.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the user who should trigger the refresh.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Refresh alarms/silents/safe zones
+see:
+  description: 'Manually refresh the watch''s live status: location, battery, charging,
+    online status and steps (the data from the watch''s device list). Other data has
+    its own services and is not refreshed here: chat messages via read_message, and
+    location-history archiving via fetch_history. Alarms, silent times and safe zones
+    refresh on their own interval or on demand via refresh_functions.'
+  fields:
+    target:
+      description: Choose your watch to update the data.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the user who should trigger the tracking.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Track Watch
+send_message:
+  description: Send a notification.
+  fields:
+    message:
+      description: Notification text of the message.
+      name: Message
+      required: true
+      selector:
+        text: null
+    target:
+      description: Choose your watch to send the message to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the user who should receive the message on the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Send Message
+set_alarm_enabled:
+  description: Enable or disable an alarm.
+  fields:
+    alarm_id:
+      description: The id of the alarm (see the alarms sensor attributes).
+      name: Alarm ID
+      required: true
+      selector:
+        text: null
+    enabled:
+      description: Enable (on) or disable (off) the entry.
+      name: Enabled
+      required: true
+      selector:
+        boolean: null
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Enable/disable alarm
+set_silent_enabled:
+  description: Enable or disable a silent-time window.
+  fields:
+    enabled:
+      description: Enable (on) or disable (off) the entry.
+      name: Enabled
+      required: true
+      selector:
+        boolean: null
+    silent_id:
+      description: The id of the silent-time window (see the silents sensor attributes).
+      name: Silent ID
+      required: true
+      selector:
+        text: null
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Enable/disable silent time
+shutdown:
+  description: Power down the watch.
+  fields:
+    target:
+      description: Choose your watch to be turned off.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the user who should power off the watch (for admins only).
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Shut Down Watch
+turn_all_alarms_off:
+  description: Disable all alarms on the watch(es).
+  fields:
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Disable all alarms
+turn_all_alarms_on:
+  description: Enable all alarms on the watch(es).
+  fields:
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Enable all alarms
+turn_all_silents_off:
+  description: Disable all silent-time windows on the watch(es).
+  fields:
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Disable all silent times
+turn_all_silents_on:
+  description: Enable all silent-time windows on the watch(es).
+  fields:
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+  name: Enable all silent times
+update_alarm:
+  description: Modify an existing alarm's time, repeat days and/or name.
+  fields:
+    alarm_id:
+      description: The id of the alarm (see the alarms sensor attributes).
+      name: Alarm ID
+      required: true
+      selector:
+        text: null
+    name:
+      description: Optional alarm label.
+      name: Name
+      required: false
+      selector:
+        text: null
+    start:
+      description: Start time (HH:MM).
+      name: Start
+      required: false
+      selector:
+        time: null
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+    weekdays:
+      description: Days of the week the entry repeats on.
+      name: Repeat days
+      required: false
+      selector:
+        select:
+          multiple: true
+          options:
+          - label: Monday
+            value: mon
+          - label: Tuesday
+            value: tue
+          - label: Wednesday
+            value: wed
+          - label: Thursday
+            value: thu
+          - label: Friday
+            value: fri
+          - label: Saturday
+            value: sat
+          - label: Sunday
+            value: sun
+  name: Update alarm
+update_silent:
+  description: Modify an existing silent-time window's start, end and/or repeat days.
+  fields:
+    end:
+      description: End time (HH:MM).
+      name: End
+      required: false
+      selector:
+        time: null
+    silent_id:
+      description: The id of the silent-time window (see the silents sensor attributes).
+      name: Silent ID
+      required: true
+      selector:
+        text: null
+    start:
+      description: Start time (HH:MM).
+      name: Start
+      required: false
+      selector:
+        time: null
+    target:
+      description: Choose the watch(es) to apply this to.
+      name: Watch(es)
+      required: true
+      selector:
+        select:
+          options:
+          - all
+    user:
+      description: Select the account that owns the watch.
+      name: User
+      required: true
+      selector:
+        text: null
+    weekdays:
+      description: Days of the week the entry repeats on.
+      name: Repeat days
+      required: false
+      selector:
+        select:
+          multiple: true
+          options:
+          - label: Monday
+            value: mon
+          - label: Tuesday
+            value: tue
+          - label: Wednesday
+            value: wed
+          - label: Thursday
+            value: thu
+          - label: Friday
+            value: fri
+          - label: Saturday
+            value: sat
+          - label: Sunday
+            value: sun
+  name: Update silent time

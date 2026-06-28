@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Run the Lovelace card test suite (vitest + jsdom) over
+# custom_components/xplora_watch/www/xplora-watch-card.js.
+#
+# Node is provided by the devcontainer's `node` feature. If you're not in the devcontainer, install
+# Node 20+ first. Deps are installed with --ignore-scripts so package lifecycle scripts don't run.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "error: npm/node not found. Rebuild the devcontainer (it adds the node feature), or install Node 20+." >&2
+  exit 1
+fi
+
+if [ ! -d node_modules/vitest ]; then
+  echo "Installing card test dependencies (vitest, jsdom)..."
+  npm install --ignore-scripts --no-audit --no-fund
+fi
+
+npm run test:card "$@"

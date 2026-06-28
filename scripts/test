@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+# Exit immediately if a command exits with a non-zero status
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "Checking Home Assistant version metadata..."
+python3 scripts/check_ha_version_sync.py
+
+# Install locked dependencies.
+echo "Installing locked Python dependencies..."
+python3 -m pip install --require-hashes -r requirements-lock.txt -r requirements-test-lock.txt --quiet
+
+# Run static type checking
+echo "Running static type checking..."
+python3 -m mypy custom_components/xplora_watch/
+
+# Run the tests
+echo "Running tests..."
+python3 -m pytest tests/ -v
+
+echo "Test run completed!"

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# --- Home Assistant version sync --------------------------------------------
+# The HA version is declared canonically in requirements-ha.txt and mirrored
+# into hacs.json and config/.HA_VERSION. scripts/check_ha_version_sync.py
+# asserts the three match (CI runs it too in lint.yml/test.yml). Run it here
+# whenever any of those files are staged, so a mismatch is caught before it
+# reaches CI. Placed first so it runs regardless of whether Python files are
+# staged (the ruff section below early-exits when none are).
+ha_version_files=(requirements-ha.txt hacs.json config/.HA_VERSION)
+if ! git diff --cached --quiet -- "${ha_version_files[@]}"; then
+  if ! python3 scripts/check_ha_version_sync.py; then
+    echo "pre-commit: Home Assistant version declarations are out of sync (above)." >&2
+    echo "            Run 'python3 scripts/check_ha_version_sync.py --fix' to synchronize them," >&2
+    echo "            or bypass once with 'git commit --no-verify'." >&2
+    exit 1
+  fi
+fi
+
+# Auto-format staged Python files with ruff before each commit, so the
+# `python3 -m ruff format . --check` CI step never fails. Anything ruff
+# reformats is re-staged, so the committed content is already formatted.
+#
+# Uses the project's ruff via `python3 -m ruff` (see pyproject.toml for the
+# config: line-length / target-version). No external tooling required.
+#
+# Note: if a file has both staged and unstaged changes, re-staging the
+# formatted file will also stage its unstaged changes. Commit whole files.
+
+# Staged Python files (Added/Copied/Modified/Renamed), NUL-delimited for safe paths.
+mapfile -d '' -t files < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.py')
+[[ ${#files[@]} -eq 0 ]] && exit 0
+
+# Keep only files still present in the worktree (skip staged deletions).
+present=()
+for f in "${files[@]}"; do
+  if [[ -f $f ]]; then
+    present+=("$f")
+  fi
+done
+[[ ${#present[@]} -eq 0 ]] && exit 0
+
+if ! python3 -m ruff --version >/dev/null 2>&1; then
+  echo "pre-commit: ruff not found via 'python3 -m ruff'." >&2
+  echo "            install it (e.g. 'python3 -m pip install ruff') or skip with 'git commit --no-verify'." >&2
+  exit 1
+fi
+
+python3 -m ruff format --quiet -- "${present[@]}"
+git add -- "${present[@]}"
+
+# --- Secret scan (gitleaks) -------------------------------------------------
+# Backstop against committing live tokens/secrets (e.g. real Xplora account
+# credentials or session tokens). Scans only the *staged* changes. Config:
+# .gitleaks.toml.
+#
+# This repo has no other secret-scanning CI, so this is the only automated net.
+# If gitleaks isn't installed we WARN loudly but don't block, so commits still
+# work without the tool — install it to re-enable the net:
+#   https://github.com/gitleaks/gitleaks#installing  (or `brew install gitleaks`)
+if command -v gitleaks >/dev/null 2>&1; then
+  # Subcommand differs by version: >=8.19 uses `git --staged`, older uses
+  # `protect --staged`. Pick whichever this install supports.
+  if gitleaks git --help >/dev/null 2>&1; then
+    gl_scan=(gitleaks git --staged)
+  else
+    gl_scan=(gitleaks protect --staged)
+  fi
+  if ! "${gl_scan[@]}" --redact --no-banner -c .gitleaks.toml; then
+    echo "pre-commit: gitleaks found a potential secret in your staged changes (above)." >&2
+    echo "            Remove it, or if it's a false positive add an allowlist entry in" >&2
+    echo "            .gitleaks.toml. Bypass once with 'git commit --no-verify'." >&2
+    exit 1
+  fi
+else
+  echo "pre-commit: WARNING - gitleaks not installed; staged changes were NOT scanned" >&2
+  echo "            for secrets. Install it to enable the backstop (see .githooks/README.md)." >&2
+fi
+
+exit 0

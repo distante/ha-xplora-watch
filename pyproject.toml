@@ -1,0 +1,111 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=custom_components.xplora_watch",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+log_cli = false
+log_level = "ERROR"
+markers = [
+    "asyncio: marks tests as async",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["custom_components.xplora_watch"]
+branch = true
+omit = [
+    "tests/*",
+    "*/tests/*",
+    "custom_components/xplora_watch/pyxplora_api/*",
+    "custom_components/xplora_watch/geocoder.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+
+[tool.ruff]
+target-version = "py314"
+line-length = 140
+extend-exclude = [
+    "custom_components/xplora_watch/geocoder.py",
+    ".build",
+]
+
+[tool.ruff.lint]
+# Only enable essential rules (no extended plugins)
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = [
+    "E501", # line too long handled by formatter/tests
+]
+
+# Per-file configuration for test files
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",    # assert in tests
+    "SLF001",  # private-member-access in tests
+    "PLR2004", # magic values in tests
+    "B023",    # lambda loop variable capture
+    "TRY003",  # long exception messages
+    "TRY301",  # abstract raise to inner function
+    "EM101",   # string literal in exception
+    "EM102",   # f-string in exception
+    "SIM102",  # collapsible if
+    "TC003",   # type-checking import placement
+]
+
+[tool.mypy]
+python_version = "3.14"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+explicit_package_bases = true
+# Allow override incompatibilities for Home Assistant base classes
+disable_error_code = ["override"]
+
+# Home Assistant specific exclusions
+exclude = [
+    "tests/",  # Tests can be less strict
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "homeassistant.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "aiofiles.*",
+    "geopy.*",
+    "pydub.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "custom_components.xplora_watch.geocoder",
+]
+ignore_errors = true

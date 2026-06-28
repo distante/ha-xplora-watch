@@ -1,0 +1,13 @@
+colorlog==6.10.1
+pip>=25.3
+-r requirements-ha.txt
+
+# Runtime requirements of the vendored xplora_watch integration (custom_components/xplora_watch/manifest.json)
+aiofiles>=23
+backoff>=2
+requests>=2
+geopy>=2.4
+dataclasses-json>=0.6
+pydub
+marshmallow-enum
+security>=1.2

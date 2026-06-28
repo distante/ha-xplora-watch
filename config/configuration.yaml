@@ -1,0 +1,32 @@
+# default_config: pulls in bluetooth/usb/go2rtc/dhcp, none of which this
+# devcontainer can satisfy (no BT/USB hardware, no go2rtc docker binary, no
+# libpcap) - they only produce setup-failure noise here. Declare the rest of
+# default_config's integrations explicitly instead.
+cloud:
+energy:
+file:
+history:
+homeassistant_alerts:
+logbook:
+media_source:
+mobile_app:
+my:
+ssdp:
+stream:
+sun:
+usage_prediction:
+webhook:
+zeroconf:
+
+# https://www.home-assistant.io/integrations/homeassistant/
+homeassistant:
+  debug: true
+
+# https://www.home-assistant.io/integrations/logger/
+logger:
+  default: info
+  logs:
+    custom_components.xplora_watch: debug
+    # libturbojpeg isn't installed in this devcontainer; it only speeds up
+    # camera snapshots, an HA core feature xplora_watch doesn't use.
+    homeassistant.components.camera.img_util: critical
