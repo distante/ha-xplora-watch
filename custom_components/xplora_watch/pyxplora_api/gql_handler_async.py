@@ -161,7 +161,7 @@ class GQLHandler(HandlerGQL):
         # field (per `WatchListItem`) before any of our indexing/parsing touches it.
         # Disabled by default (the payload is large and contains personal data); uncomment to
         # inspect what the server actually returns. See `_RAW_LOGGER` for how to enable it.
-        # _RAW_LOGGER.debug("raw deviceList response: %s", data)
+        _RAW_LOGGER.debug("raw deviceList response: %s", data)
         errors = data.get("errors", [])
         if errors:
             self.errors.append({"function": "get_device_list", "errors": errors})
@@ -264,9 +264,18 @@ class GQLHandler(HandlerGQL):
         res: GqlResponse = await self.runAuthorizedGqlQuery_a(
             gq.WATCH_Q.get("chatsQ", ""), {"uid": wuid, "offset": offset, "limit": limit, "msgId": msgId}, "Chats"
         )
-        if res.get("errors", None) or res.get("data", None) is None:
+        # Raw, unparsed `chatsNew` response -- routed through the same opt-in `_RAW_LOGGER` channel
+        # as the deviceList dump. Off by default (it carries message bodies and ids); enable it to
+        # see exactly what the server returns when a chat thread shows up empty in the UI.
+        _RAW_LOGGER.debug("raw chatsNew response: %s", res)
+        errors = res.get("errors", None)
+        if errors:
+            # The server's error strings carry no account data, so logging them at DEBUG lets a
+            # permission/query rejection be told apart from a genuinely empty thread.
+            _LOGGER.debug("chatsNew for ...%s returned errors: %s", wuid[25:], errors)
+        if errors or res.get("data", None) is None:
             if asObject:
-                _LOGGER.error(res.get("errors", None))
+                _LOGGER.error(errors)
                 return Chats.from_dict(res.get("data", {}))
             return {}
         if asObject:

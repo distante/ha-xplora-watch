@@ -119,10 +119,17 @@ async def test_extra_state_attributes_message_merges_chats(
     }
 
 
-async def test_extra_state_attributes_message_falls_back_when_falsy(
+async def test_extra_state_attributes_message_exposes_ids_when_no_chats_yet(
     hass: HomeAssistant, mock_config_entry_phone, coordinator_with_data: XploraDataUpdateCoordinator
 ) -> None:
-    """When chats is falsy (empty dict), SENSOR_MESSAGE falls back to the user attribute."""
+    """Even with no chats fetched yet (empty dict), SENSOR_MESSAGE still exposes the static ids.
+
+    Regression for the cold-start deadlock: chats are fetched only by the `read_message` service,
+    which the chat card can only call once it can read `entry_id`/`wuid` from this sensor. Gating
+    those ids on a non-empty chat dict meant the card could never issue the first fetch (no chats
+    -> no ids -> can't fetch -> no chats). The ids must be present from the start; the chat payload
+    (`list`) is simply absent until the first `read_message`.
+    """
     coordinator_with_data.data[DEFAULT_WUID][SENSOR_MESSAGE] = {}
     sensor = _make_sensor(hass, mock_config_entry_phone, coordinator_with_data, SENSOR_MESSAGE)
 
@@ -130,7 +137,9 @@ async def test_extra_state_attributes_message_falls_back_when_falsy(
 
     assert attributes == {
         CONF_REFRESH_ON_CARD_RENDER: False,
-        "user": coordinator_with_data.controller.getUserName(),
+        "entry_id": mock_config_entry_phone.entry_id,
+        "wuid": DEFAULT_WUID,
+        "account_user_id": coordinator_with_data.user_id,
     }
 
 

@@ -232,25 +232,25 @@ class XploraSensor(XploraBaseEntity, SensorEntity):
                 **{ATTR_LAST_UPDATE_TIME: self.coordinator.data[self.watch_uid].get(ATTR_LAST_UPDATE_TIME)},
                 user=self.coordinator.controller.getUserName(),
             )
-        if (
-            self.entity_description.key is SENSOR_MESSAGE
-            and self.coordinator.data
-            and self.coordinator.data.get(self.watch_uid, None)
-            and SENSOR_MESSAGE in self.coordinator.data[self.watch_uid]
-            and self.coordinator.data[self.watch_uid].get(SENSOR_MESSAGE, None)
-        ):
-            # `entry_id` and `wuid` are surfaced alongside the chats so the custom chat card can
-            # target the message services (`send_message` / `read_message`): the `user` service
-            # field is resolved from the entry id and `target` is the wuid -- same convention as
-            # the alarm/silent list sensors. `account_user_id` is the logged-in user's id, which the
-            # chat card uses to tell outgoing messages (we sent them, so `sender.id` is our id) from
-            # incoming ones (from the watch) -- see `sendText`'s "sender is login User".
+        if self.entity_description.key is SENSOR_MESSAGE:
+            # `entry_id`, `wuid` and `account_user_id` are STATIC per-watch identifiers, surfaced
+            # unconditionally -- even before any chat has been fetched. The custom chat card reads
+            # them to target the message services (`send_message` / `read_message`): the `user`
+            # field is resolved from `entry_id`, `target` is the `wuid` (same convention as the
+            # alarm/silent list sensors), and `account_user_id` (the logged-in user's id) lets the
+            # card tell outgoing messages (we sent them, so `sender.id` is our id) from incoming
+            # ones -- see `sendText`'s "sender is login User". They must NOT be gated on a non-empty
+            # chat dict: chats are fetched only by the `read_message` service, which the card can
+            # only call once it has these ids -- gating them deadlocked a cold start (no chats -> no
+            # ids -> the card can't fetch -> still no chats). The chat payload (`list`, ...) is
+            # merged in once `read_message` has populated it.
+            messages = ((self.coordinator.data or {}).get(self.watch_uid) or {}).get(SENSOR_MESSAGE) or {}
             return dict(
                 data,
                 entry_id=self._config_entry.entry_id,
                 wuid=self.watch_uid,
                 account_user_id=self.coordinator.user_id,
-                **self.coordinator.data[self.watch_uid].get(SENSOR_MESSAGE),
+                **messages,
             )
         return dict(data, user=self.coordinator.controller.getUserName())
 

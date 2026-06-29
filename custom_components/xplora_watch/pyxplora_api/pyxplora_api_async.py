@@ -637,6 +637,17 @@ class PyXploraApi(PyXplora):
             if not chats_new:
                 await self._retry_backoff_sleep(retry_counter)
 
+        # Diagnostic (shape only -- message bodies/ids are PII and are never logged here): tells an
+        # empty thread (list_len 0) apart from a fetch we dropped, when the chat window shows blank.
+        _LOGGER.debug(
+            "chatsNew fetch ...%s offset=%s limit=%s retries=%s -> empty=%s list_len=%s",
+            wuid[25:],
+            offset,
+            limit,
+            retry_counter,
+            not chats_new,
+            len((chats_new or {}).get("list") or []),
+        )
         return ChatsNew.from_dict(chats_new, infer_missing=True) if asObject else chats_new
 
     ##### Watch Location Info #####

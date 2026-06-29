@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from custom_components.xplora_watch.const import ATTR_LAST_UPDATE_STATUS, LAST_UPDATE_NO_RESPONSE, LAST_UPDATE_OK
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
-from tests.xplora_watch.fixtures.graphql_payloads import DEFAULT_WUID, make_device_list_payload, make_watch_last_locate_payload
+from tests.xplora_watch.fixtures.graphql_payloads import (
+    DEFAULT_WUID,
+    make_ask_watch_locate_payload,
+    make_device_list_payload,
+    make_watch_last_locate_payload,
+)
 
 
 async def test_data_loop_happy_path(coordinator: XploraDataUpdateCoordinator) -> None:
@@ -67,3 +73,36 @@ async def test_data_loop_offline_when_device_list_reports_offline(coordinator: X
     data = await coordinator.data_loop([DEFAULT_WUID], message_limit=10, remove_message=False)
 
     assert data[DEFAULT_WUID]["isOnline"] is False
+
+
+async def test_data_loop_non_admin_no_response_is_still_ok(coordinator: XploraDataUpdateCoordinator, graphql_operations) -> None:
+    """A secondary guardian records `ok` even when the watch doesn't accept the locate request.
+
+    A `guardianType != "FIRST"` account is a contact, not a location-tracking guardian: the server
+    returns it no fresh fix (the deviceList carries `location: null` for it), so a no-response from
+    `askWatchLocate` is the expected steady state, not a failure. The completed refresh must record
+    `ok` -- otherwise these accounts show the "watch didn't respond" warning on every single poll
+    while their chat/online/unread-count data is perfectly correct.
+    """
+    graphql_operations["AskWatchLocate"] = {"data": make_ask_watch_locate_payload(success=False)}
+
+    await coordinator.controller.setDevices([DEFAULT_WUID])
+    coordinator.is_admin[DEFAULT_WUID] = False  # secondary guardian / contact
+    data = await coordinator.data_loop([DEFAULT_WUID], message_limit=10, remove_message=False)
+
+    assert data[DEFAULT_WUID][ATTR_LAST_UPDATE_STATUS] == LAST_UPDATE_OK
+
+
+async def test_data_loop_admin_no_response_records_no_response(coordinator: XploraDataUpdateCoordinator, graphql_operations) -> None:
+    """A primary guardian still records `no_response` when the watch doesn't accept the locate.
+
+    Preserves the warning that matters for location tracking: for `guardianType == "FIRST"` the
+    `askWatchLocate` verdict is the real "could not update the location" signal.
+    """
+    graphql_operations["AskWatchLocate"] = {"data": make_ask_watch_locate_payload(success=False)}
+
+    await coordinator.controller.setDevices([DEFAULT_WUID])
+    coordinator.is_admin[DEFAULT_WUID] = True  # primary guardian
+    data = await coordinator.data_loop([DEFAULT_WUID], message_limit=10, remove_message=False)
+
+    assert data[DEFAULT_WUID][ATTR_LAST_UPDATE_STATUS] == LAST_UPDATE_NO_RESPONSE

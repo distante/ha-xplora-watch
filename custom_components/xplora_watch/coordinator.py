@@ -871,17 +871,31 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
             if include_history:
                 await self._fetch_loc_history(wuid)
             watch_data = self.get_data(wuid, chats)
-            # Record the per-watch update outcome: the watch accepted the locate request (ok) or it
-            # is off / out of reach (no_response). The `last_update` sensor and the cards read this
-            # so users can tell a real update from a stale echo.
-            update_status = LAST_UPDATE_OK if responded else LAST_UPDATE_NO_RESPONSE
+            # Record the per-watch update outcome. A primary guardian drives location tracking, so
+            # the watch accepting the locate request (ok) vs. being off / out of reach (no_response)
+            # is a real signal worth surfacing. A secondary guardian frequently cannot trigger a
+            # fresh fix at all, so a non-response is expected -- not a failure: for them a refresh
+            # that reached this point (no UpdateFailed) is a success, and flagging the
+            # otherwise-correct update (battery, online status, unread count) with a warning would be
+            # misleading. The `last_update` sensor and the cards read this.
+            if self.is_admin.get(wuid, False):
+                update_status = LAST_UPDATE_OK if responded else LAST_UPDATE_NO_RESPONSE
+            else:
+                update_status = LAST_UPDATE_OK
             watch_data[wuid][ATTR_LAST_UPDATE_STATUS] = update_status
             watch_data[wuid][ATTR_LAST_UPDATE_TIME] = datetime.now().isoformat()
             # Debug trace of the update verdict (kept at DEBUG, not WARNING: a watch being briefly
             # out of reach is a normal, frequent outcome -- warning on every no_response would spam
             # the log). This line is the breadcrumb to look for when a user reports "it shows
-            # 'didn't respond'": it ties the verdict to `askWatchLocate`'s reachability result.
-            self._log.debug("update outcome for watch ...%s: %s (askWatchLocate responded=%s)", wuid[25:], update_status, responded)
+            # 'didn't respond'": it ties the verdict to `askWatchLocate`'s reachability result and
+            # whether the watch counts as locate-tracked (primary guardian).
+            self._log.debug(
+                "update outcome for watch ...%s: %s (askWatchLocate responded=%s, is_admin=%s)",
+                wuid[25:],
+                update_status,
+                responded,
+                self.is_admin.get(wuid, False),
+            )
             data.update(watch_data)
             self._log_watch_values(wuid, watch_data[wuid])
         return data
