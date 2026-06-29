@@ -1,0 +1,42 @@
+# Auto-publishes a GitHub Release whenever a version tag (v*) is pushed.
+#
+# HACS installs the latest *Release*, not the latest tag, so a tag on its own
+# never reaches users. This turns each `git push origin vX.Y.Z` into a published
+# Release (marked Latest) with auto-generated notes, closing that gap.
+#
+# Notes are generated server-side by the GitHub API from the commits/PRs since
+# the previous tag. The built-in GITHUB_TOKEN's `contents: write` is sufficient;
+# no extra secrets or third-party actions are needed.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release from tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; nothing to do."
+            exit 0
+          fi
+          gh release create "$tag" \
+            --title "$tag" \
+            --generate-notes \
+            --latest \
+            --verify-tag
