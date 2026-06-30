@@ -139,6 +139,32 @@ BUTTON_UPDATE: Final = "update"
 # silent times, so it carries a descriptive name on the controls card.
 BUTTON_REFRESH_FUNCTIONS: Final = "refresh_functions"
 
+# Entity description keys that belong to a watch's *Guardian* (`guardianType == "FIRST"`) only and
+# are not created for an account that is merely a *Contact* of the watch. A Contact is sent no
+# battery, location or alarm/silent data (so those sensors would sit permanently unavailable), and
+# the integration restricts watch-control actions to the Guardian as a client policy (ref:XW-009).
+# Kept in one place so the entity platforms, the upgrade cleanup sweep, and the service gate can't
+# drift on which kinds are Guardian-only. The device-tracker entities (main tracker + per-zone
+# safe-zone trackers) carry no description key and are gated at the platform level instead (a
+# Contact gets no trackers at all), so they are intentionally not listed here.
+#
+# NOT restricted -- kept for a Contact: online status (the `state` binary sensor), steps
+# (`step_day`), xcoin, chat (`message`), last-update, and the `update` button.
+GUARDIAN_ONLY_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        SENSOR_BATTERY,
+        SENSOR_DISTANCE,
+        SENSOR_ALARMS,
+        SENSOR_SILENTS,
+        SENSOR_LOCATION_HISTORY,
+        BINARY_SENSOR_CHARGING,
+        BINARY_SENSOR_SAFEZONE,
+        BUTTON_REBOOT,
+        BUTTON_SHUTDOWN,
+        BUTTON_REFRESH_FUNCTIONS,
+    }
+)
+
 # Per-watch "last update" outcome, recorded by the coordinator each refresh and surfaced by the
 # `last_update` diagnostic sensor (and the cards). It distinguishes a watch that reported fresh data
 # (`ok`) from one that did not respond -- off / out of reach -- (`no_response`) and from a failed

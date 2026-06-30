@@ -442,6 +442,18 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
             if guardian_type is not None:
                 self.is_admin[wuid] = guardian_type == "FIRST"
 
+    def is_confirmed_contact(self, wuid: str) -> bool:
+        """Whether this watch's account is a *confirmed* Contact -- role known and not a Guardian.
+
+        Reads the per-watch role derived in `_update_is_admin` (`guardianType == "FIRST"` => the
+        account is the watch's Guardian, ref:XW-009) with no extra request. Fails open: only a
+        watch whose role is resolved *and* non-Guardian counts as a Contact. An unknown/unresolved
+        role -- never populated, so the wuid is absent from `is_admin` and `.get` returns None -- is
+        treated as a Guardian, so incomplete data never misclassifies a real Guardian as a Contact
+        and silently strips their entities or blocks their control.
+        """
+        return self.is_admin.get(wuid) is False
+
     def _account_label(self) -> str:
         """A human-recognizable account identifier for logs (email / phone), never the password."""
         data = self._entry.data
