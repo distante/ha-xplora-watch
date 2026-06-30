@@ -12,10 +12,12 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
+from homeassistant.util import slugify
 
+from .config import resolve_account_alias
 from .const import ATTR_WATCH, DATA_HASS_CONFIG, DOMAIN, GUARDIAN_ONLY_KEYS
 from .coordinator import XploraDataUpdateCoordinator
-from .helper import async_register_frontend_card, create_service_yaml_file, create_www_directory
+from .helper import account_token, async_register_frontend_card, create_service_yaml_file, create_www_directory
 from .services import async_setup_services, async_unload_services
 from .websocket import async_register_websocket_commands
 
@@ -70,6 +72,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # known earlier. Removes Guardian-only entities a previous version may have created for a watch
     # the account is only a Contact of, before the platforms (re)create the allowed ones below.
     _async_remove_contact_guardian_only_entities(hass, entry, coordinator)
+
+    # Rename any pre-token default slugs to the tokened slug so an upgraded install matches the
+    # entities the platforms now create. Runs before platform setup (below), so when the platforms
+    # reconcile by unique_id they find each entity already at its final slug. Reuses `wuids` (no
+    # extra fetch); the user_id was resolved in init().
+    await _async_migrate_entity_slugs(hass, entry, coordinator, wuids)
 
     for wuid in wuids:
         # Read the admin flag the coordinator already resolved during init() -- re-calling
@@ -169,6 +177,16 @@ def _async_remove_orphaned_switch_entities(hass: HomeAssistant, config_entry: Co
             entity_registry.async_remove(entity.entity_id)
 
 
+def _normalize(value: str) -> str:
+    """Normalize an id segment the way the entity platforms build their unique ids.
+
+    The platforms lower-case and turn spaces/dashes into underscores when composing a unique id;
+    mirroring that here lets registry-maintenance code match a watch id or account id against the
+    stored, already-normalized segments.
+    """
+    return value.replace(" ", "_").replace("-", "_").lower()
+
+
 def _is_guardian_only_kind(id_prefix: str) -> bool:
     """Whether ``{ward}_watch_{kind}`` -- a unique id with the trailing ``_{wuid}_...`` removed --
     names a Guardian-only entity kind.
@@ -205,9 +223,6 @@ def _async_remove_contact_guardian_only_entities(
     # underscores). Match on that segment to pin the watch: a Guardian watch on the same account is
     # never touched, and the match survives `_async_migrate_entries` having reshaped the trailing
     # `_{user_id}` above (it leaves the wuid segment intact).
-    def _normalize(value: str) -> str:
-        return value.replace(" ", "_").replace("-", "_").lower()
-
     contact_markers = [f"_{_normalize(wuid)}_" for wuid in coordinator.is_admin if coordinator.is_confirmed_contact(wuid)]
     if not contact_markers:
         return
@@ -255,3 +270,58 @@ async def _async_migrate_entries(hass: HomeAssistant, config_entry: ConfigEntry,
     await er.async_migrate_entries(hass, config_entry.entry_id, update_unique_id)
 
     return True
+
+
+async def _async_migrate_entity_slugs(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    coordinator: XploraDataUpdateCoordinator,
+    wuids: list[str],
+) -> None:
+    """Force-migrate pre-existing default entity slugs to the tokened slug (one-time, idempotent).
+
+    The integration began appending the per-account token to every entity slug
+    (`xplora_<ward>_watch_<key>` -> `..._<token>`) so the same watch linked to several accounts no
+    longer collides. Newly-created entities already carry it; this renames the entities an existing
+    install created *before* the token, so old and new entities look the same (no temporal
+    asymmetry). The entity-registry rename carries history and long-term statistics with it; the
+    `unique_id` is left untouched (it already disambiguates per account).
+
+    Only an entity whose current `entity_id` still equals the slug the platform would have generated
+    before the token (its old default) is migrated -- a user-renamed entity is left alone. Idempotent:
+    an entity already at its tokened slug is skipped, so a second run is a no-op. A pre-alias entry
+    migrates using the fallback token (account display name -> opaque account id).
+    """
+    token = account_token(resolve_account_alias(config_entry), coordinator.username, coordinator.user_id)
+    # The slugified token is the only account-derived slug segment; if it is empty there is nothing
+    # to append and every entity is already at its final slug.
+    if not slugify(token):
+        return
+
+    user_tail = f"_{_normalize(coordinator.user_id)}"
+    # The `_{wuid}_{user_id}` tail of each entity's unique id, normalized the way the platforms build
+    # ids. Stripping it recovers the pre-token `{ward}_watch_{key}` core the slug is built from. An
+    # entity whose unique id lacks a known watch's tail (or whose slug isn't derived from that core,
+    # e.g. a safezone tracker keyed by vendor id) won't match its old default below and is left as-is.
+    watch_tails = [f"_{_normalize(wuid)}{user_tail}" for wuid in wuids]
+
+    entity_registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id):
+        unique_id = str(entity.unique_id)
+        tail = next((t for t in watch_tails if unique_id.endswith(t)), None)
+        if tail is None:
+            continue  # not one of this account's known watches -- leave it
+        core = unique_id[: -len(tail)]
+        old_object_id = slugify(f"xplora_{core}")
+        new_object_id = slugify(f"xplora_{core} {token}")
+        current_object_id = entity.entity_id.split(".", 1)[1]
+        if current_object_id == new_object_id:
+            continue  # already tokened -- idempotent no-op
+        if current_object_id != old_object_id:
+            continue  # user-renamed (or a kind whose slug isn't its unique-id core) -- leave it
+        new_entity_id = f"{entity.domain}.{new_object_id}"
+        if entity_registry.async_get(new_entity_id) is not None:
+            _LOGGER.debug("Cannot migrate slug '%s' -> '%s': target already exists", entity.entity_id, new_entity_id)
+            continue
+        _LOGGER.debug("Migrating entity slug '%s' -> '%s'", entity.entity_id, new_entity_id)
+        entity_registry.async_update_entity(entity.entity_id, new_entity_id=new_entity_id)
