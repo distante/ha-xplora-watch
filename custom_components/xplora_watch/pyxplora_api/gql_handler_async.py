@@ -160,7 +160,7 @@ class GQLHandler(HandlerGQL):
         # field (per `WatchListItem`) before any of our indexing/parsing touches it.
         # Disabled by default (the payload is large and contains personal data); uncomment to
         # inspect what the server actually returns. See `_RAW_LOGGER` for how to enable it.
-        _RAW_LOGGER.debug("raw deviceList response: %s", data)
+        # _RAW_LOGGER.debug("raw deviceList response: %s", data)
         errors = data.get("errors", [])
         if errors:
             self.errors.append({"function": "get_device_list", "errors": errors})
