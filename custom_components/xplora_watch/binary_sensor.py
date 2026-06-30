@@ -37,6 +37,7 @@ from .const import (
     CONF_HOME_RADIUS,
     CONF_WATCHES,
     DOMAIN,
+    GUARDIAN_ONLY_KEYS,
     HOME,
 )
 from .coordinator import XploraDataUpdateCoordinator
@@ -96,6 +97,12 @@ async def async_setup_entry(
             # Only `CONF_WATCHES` gates creation now; visibility is per-entity via
             # `entity_registry_enabled_default`, not an options-flow type selection.
             if conf_watches is None or wuid not in conf_watches:
+                continue
+
+            # The charging and safe-zone sensors depend on battery/location data a *Contact* never
+            # receives, so skip them for a watch the account is only a Contact of (ref:XW-009).
+            # Fails open: an unknown/unresolved role is treated as a Guardian. Online state is kept.
+            if coordinator.is_confirmed_contact(wuid) and description.key in GUARDIAN_ONLY_KEYS:
                 continue
 
             entities.append(XploraBinarySensor(config_entry, coordinator, ward, wuid, description))

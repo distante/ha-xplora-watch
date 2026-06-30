@@ -13,7 +13,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
-from .const import DATA_HASS_CONFIG, DOMAIN
+from .const import ATTR_WATCH, DATA_HASS_CONFIG, DOMAIN, GUARDIAN_ONLY_KEYS
 from .coordinator import XploraDataUpdateCoordinator
 from .helper import async_register_frontend_card, create_service_yaml_file, create_www_directory
 from .services import async_setup_services, async_unload_services
@@ -64,6 +64,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     wuids = coordinator.controller.getWatchUserIDs()
     username = coordinator.username
+
+    # Runs after the first refresh (unlike the switch sweep above): the per-watch Guardian/Contact
+    # role it keys off is derived from `deviceList.guardianType` during that refresh, so it isn't
+    # known earlier. Removes Guardian-only entities a previous version may have created for a watch
+    # the account is only a Contact of, before the platforms (re)create the allowed ones below.
+    _async_remove_contact_guardian_only_entities(hass, entry, coordinator)
 
     for wuid in wuids:
         # Read the admin flag the coordinator already resolved during init() -- re-calling
@@ -160,6 +166,63 @@ def _async_remove_orphaned_switch_entities(hass: HomeAssistant, config_entry: Co
     for entity in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id):
         if entity.domain == Platform.SWITCH.value:
             _LOGGER.debug("Removing orphaned alarm/silent switch entity '%s'", entity.entity_id)
+            entity_registry.async_remove(entity.entity_id)
+
+
+def _is_guardian_only_kind(id_prefix: str) -> bool:
+    """Whether ``{ward}_watch_{kind}`` -- a unique id with the trailing ``_{wuid}_...`` removed --
+    names a Guardian-only entity kind.
+
+    The kind is the token after the *last* ``_watch_`` segment of the prefix. Matching it there
+    (rather than as a bare substring of the whole id) means a Ward (child) named like an entity kind
+    -- e.g. "Battery" -- which sits *before* that segment can't cause a false match. The caller
+    strips the wuid first, so a wuid that itself starts with "watch" can't be taken for the segment.
+    """
+    _, watch_segment, kind = id_prefix.rpartition(f"_{ATTR_WATCH}_")
+    return bool(watch_segment) and kind in GUARDIAN_ONLY_KEYS
+
+
+@callback
+def _async_remove_contact_guardian_only_entities(
+    hass: HomeAssistant, config_entry: ConfigEntry, coordinator: XploraDataUpdateCoordinator
+) -> None:
+    """Purge Guardian-only entities left over for a watch the account is only a *Contact* of.
+
+    A Contact is sent no battery/location/alarm data and may not control the watch, so those
+    entities (battery, distance, the alarm/silent lists and location-history sensors; the charging
+    and safe-zone binary sensors; the reboot/shutdown/refresh-functions buttons; and every device
+    tracker) are no longer created for a confirmed-Contact watch (ref:XW-009). Home Assistant keeps a
+    registry entry after a platform stops providing it, so a user upgrading from a version that
+    created them would keep seeing them permanently "Unavailable" -- this one-shot, idempotent sweep
+    removes them. A Guardian's watch is untouched, as are a Contact's kept entities (online, steps,
+    xcoin, chat, last-update, the Update button). Fails open via `is_confirmed_contact`: an
+    unknown/unresolved role is treated as a Guardian, so incomplete data never strips a Guardian's
+    entities.
+    """
+
+    # A watch's entities all carry its (opaque, globally unique) wuid as a `_{wuid}_` segment of
+    # their unique id, normalized the way the platforms build ids (lower-cased, spaces/dashes ->
+    # underscores). Match on that segment to pin the watch: a Guardian watch on the same account is
+    # never touched, and the match survives `_async_migrate_entries` having reshaped the trailing
+    # `_{user_id}` above (it leaves the wuid segment intact).
+    def _normalize(value: str) -> str:
+        return value.replace(" ", "_").replace("-", "_").lower()
+
+    contact_markers = [f"_{_normalize(wuid)}_" for wuid in coordinator.is_admin if coordinator.is_confirmed_contact(wuid)]
+    if not contact_markers:
+        return
+
+    entity_registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id):
+        unique_id = str(entity.unique_id)
+        marker = next((m for m in contact_markers if m in unique_id), None)
+        if marker is None:
+            continue  # belongs to a Guardian watch (or no known watch) -- leave it
+        # Every device tracker (the watch tracker and the per-safezone trackers) is location-based,
+        # so a Contact gets none; the other Guardian-only kinds are matched on the `{ward}_watch_{kind}`
+        # token ahead of the wuid (split off here so the wuid can't interfere with the match).
+        if entity.domain == Platform.DEVICE_TRACKER.value or _is_guardian_only_kind(unique_id.split(marker, 1)[0]):
+            _LOGGER.debug("Removing Guardian-only entity '%s' registered for a contact watch", entity.entity_id)
             entity_registry.async_remove(entity.entity_id)
 
 

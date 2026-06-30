@@ -28,6 +28,7 @@ from .const import (
     CONF_WATCHES,
     DEFAULT_LANGUAGE,
     DOMAIN,
+    GUARDIAN_ONLY_KEYS,
     LAST_UPDATE_ERROR,
     LAST_UPDATE_NO_RESPONSE,
     LAST_UPDATE_OK,
@@ -160,11 +161,22 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         if conf_watches is None or wuid not in conf_watches:
             continue
 
+        # A watch the account is only a *Contact* of is sent no battery/location/alarm data, so the
+        # Guardian-only sensors (battery, distance, the alarm/silent lists and location-history)
+        # would sit permanently unavailable -- skip creating them (ref:XW-009). Fails open: an
+        # unknown/unresolved role is treated as a Guardian, so a real Guardian is never stripped.
+        is_contact = coordinator.is_confirmed_contact(wuid)
+
         for description in SENSOR_TYPES:
+            if is_contact and description.key in GUARDIAN_ONLY_KEYS:
+                continue
             entities.append(XploraSensor(config_entry, coordinator, ward, wuid, description))
         for description in LIST_SENSOR_TYPES:
+            if is_contact and description.key in GUARDIAN_ONLY_KEYS:
+                continue
             entities.append(XploraListSensor(config_entry, coordinator, ward, wuid, description))
-        entities.append(XploraHistorySensor(config_entry, coordinator, ward, wuid, HISTORY_SENSOR_TYPE))
+        if not (is_contact and HISTORY_SENSOR_TYPE.key in GUARDIAN_ONLY_KEYS):
+            entities.append(XploraHistorySensor(config_entry, coordinator, ward, wuid, HISTORY_SENSOR_TYPE))
 
     async_add_entities(entities)
 

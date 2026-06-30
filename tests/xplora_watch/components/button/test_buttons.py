@@ -1,8 +1,10 @@
 """Tests for button.py: direct per-watch reboot / shutdown / update action buttons.
 
 Each button is bound to one watch and, when pressed, runs the same action as the matching service
-(reboot / shutdown / see) for that watch -- no target/user selection needed. reboot/shutdown are
-admin-only and only created for admin watches.
+(reboot / shutdown / see) for that watch -- no target/user selection needed. The reboot, shutdown
+and refresh-functions buttons are Guardian-only control actions: created for a watch the account is
+the Guardian of, and skipped for one it is only a Contact of (ref:XW-009). The update button is
+created for every watch.
 """
 
 from __future__ import annotations
@@ -53,13 +55,13 @@ def _capture() -> tuple[list, object]:
     return captured, capture_entities
 
 
-async def test_setup_creates_all_buttons_regardless_of_admin(
+async def test_setup_creates_all_buttons_for_a_guardian(
     hass: HomeAssistant,
     mock_config_entry_phone: MockConfigEntry,
     coordinator_with_data: XploraDataUpdateCoordinator,
 ) -> None:
-    """All three buttons are created for every watch -- there is no client-side admin gate on
-    reboot/shutdown anymore (the server authorizes the action; a non-primary guardian can too)."""
+    """Regression: a Guardian (the fixture default) gets every button, including the Guardian-only
+    reboot/shutdown/refresh-functions controls."""
     hass.data.setdefault(DOMAIN, {})[mock_config_entry_phone.entry_id] = coordinator_with_data
     captured, capture_entities = _capture()
 
@@ -67,6 +69,23 @@ async def test_setup_creates_all_buttons_regardless_of_admin(
 
     keys = {e.entity_description.key for e in captured}
     assert {BUTTON_UPDATE, BUTTON_REFRESH_FUNCTIONS, BUTTON_REBOOT, BUTTON_SHUTDOWN} <= keys
+
+
+async def test_setup_skips_guardian_only_buttons_for_a_contact(
+    hass: HomeAssistant,
+    mock_config_entry_phone: MockConfigEntry,
+    coordinator_with_data: XploraDataUpdateCoordinator,
+) -> None:
+    """A watch the account is only a Contact of gets only the Update button; reboot, shutdown and
+    refresh-functions are Guardian-only control actions and are skipped (ref:XW-009)."""
+    coordinator_with_data.is_admin = {DEFAULT_WUID: False}
+    hass.data.setdefault(DOMAIN, {})[mock_config_entry_phone.entry_id] = coordinator_with_data
+    captured, capture_entities = _capture()
+
+    await async_setup_entry(hass, mock_config_entry_phone, capture_entities)
+
+    keys = {e.entity_description.key for e in captured}
+    assert keys == {BUTTON_UPDATE}
 
 
 async def test_buttons_disabled_by_default(

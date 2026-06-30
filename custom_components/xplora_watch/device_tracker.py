@@ -63,6 +63,13 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         if conf_watches is None or wuid not in conf_watches:
             continue
 
+        # A Contact of the watch is sent no location data, so every tracker (the watch tracker and
+        # the per-safezone trackers) would sit permanently unavailable -- create none for a watch the
+        # account is only a Contact of (ref:XW-009). Fails open: an unknown/unresolved role is
+        # treated as a Guardian, so a real Guardian still gets its trackers.
+        if coordinator.is_confirmed_contact(wuid):
+            continue
+
         # Reuse the safe-zone definitions the coordinator already fetched (the first refresh seeds
         # them, see `_setDevice`), instead of issuing another `SafeZones` request here. That extra
         # per-setup call ignored the functions-poll interval and duplicated data already in hand.

@@ -1,10 +1,12 @@
 """Direct per-watch action buttons for Xplora® Watch Version 2.
 
 Each button is bound to a single watch, so pressing it runs the action for that child (and the
-guardian/account that owns the config entry) directly -- the same effect as the matching service
-(`reboot` / `shutdown` / `see`) but without having to select a target/user. All three are created
-for every configured watch: the server authorizes who may `reboot`/`shutdown` -- a non-primary
-guardian can do so (ref:XW-007) -- so the integration no longer pre-gates these on admin status.
+account that owns the config entry) directly -- the same effect as the matching service
+(`reboot` / `shutdown` / `see`) but without having to select a target/user. The `update` button is
+created for every watch; the Guardian-only action buttons (reboot, shutdown and refresh-functions)
+are created only for a watch the account is the *Guardian* of, and skipped for one it is only a
+*Contact* of -- the integration restricts those control actions to the Guardian as a client policy,
+mirroring the Life app, which hides them from a Contact (ref:XW-009).
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from .const import (
     BUTTON_UPDATE,
     CONF_WATCHES,
     DOMAIN,
+    GUARDIAN_ONLY_KEYS,
     LAST_UPDATE_ERROR,
 )
 from .coordinator import XploraDataUpdateCoordinator
@@ -104,9 +107,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         if conf_watches is None or wuid not in conf_watches:
             continue
 
-        # All buttons are created for every watch; the server authorizes reboot/shutdown, so there
-        # is no client-side admin gate on which buttons appear.
+        # The reboot/shutdown/refresh-functions buttons are watch-control actions the integration
+        # restricts to the Guardian as a client policy (ref:XW-009), so they are skipped for a watch
+        # the account is only a Contact of -- only the `update` button is created there. Fails open:
+        # an unknown/unresolved role is treated as a Guardian, so a real Guardian keeps every button.
+        is_contact = coordinator.is_confirmed_contact(wuid)
         for description in BUTTON_TYPES:
+            if is_contact and description.key in GUARDIAN_ONLY_KEYS:
+                continue
             entities.append(XploraButton(config_entry, coordinator, ward, wuid, description))
 
     async_add_entities(entities)
