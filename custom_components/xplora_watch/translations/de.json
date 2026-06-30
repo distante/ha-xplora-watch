@@ -6,6 +6,11 @@
       }
     }
   },
+  "exceptions": {
+    "not_guardian": {
+      "message": "Dieses Konto ist nicht der Administrator dieser Uhr und kann daher folgende Aktion nicht ausführen: „{action}“."
+    }
+  },
   "config": {
     "abort": {
       "already_configured": "Integration wurde bereits konfiguriert",

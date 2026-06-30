@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.xplora_watch.const import DOMAIN
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
@@ -29,41 +31,24 @@ async def test_shutdown_admin_watch_succeeds(hass: HomeAssistant, coordinator: X
     assert "Shutdown result: True" in caplog.text
 
 
-async def test_shutdown_non_primary_guardian_still_succeeds(
+async def test_shutdown_contact_watch_is_blocked(
     hass: HomeAssistant,
     coordinator: XploraDataUpdateCoordinator,
-    graphql_operations,
     caplog,
 ) -> None:
-    # A non-primary (guardianType != "FIRST") guardian can still shut a watch down: the admin gate
-    # was dropped, so controller.shutdown() just fires the mutation and the server authorizes it
-    # (ref:XW-007). The
-    # Contacts payload no longer affects the outcome (shutdown does not call it).
-    graphql_operations["Contacts"] = {
-        "data": {
-            "contacts": {
-                "contacts": [
-                    {
-                        "contactUser": {"id": "user-id-001", "xcoin": 0},
-                        "guardianType": "SECOND",
-                        "create": 1700000000,
-                        "update": 1700000000,
-                        "name": "Parent Name",
-                        "countryPhoneNumber": "49",
-                        "phoneNumber": "1700000001",
-                    }
-                ]
-            }
-        }
-    }
+    # A Contact (role resolved and not the Guardian: guardianType != "FIRST") may NOT shut the watch
+    # down. The integration restricts this control action to the watch's Guardian as a client policy
+    # (ref:XW-009): the service raises ServiceValidationError and the shutdown mutation is never sent.
+    # (Reverses the old ref:XW-007 "non-primary guardian still succeeds" behavior; the chat half of
+    # ref:XW-007 still holds.)
+    coordinator.is_admin = {DEFAULT_WUID: False}
     entry_id = _register_coordinator(hass, coordinator)
     shutdown_service = XploraShutdownService(hass, entry_id)
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(logging.DEBUG), pytest.raises(ServiceValidationError):
         await shutdown_service.async_shutdown([DEFAULT_WUID], kwargs={"user": [f"{entry_id} (testuser)"]})
 
-    assert "Shutdown failed" not in caplog.text
-    assert "Shutdown result: True" in caplog.text
+    assert "Shutdown result" not in caplog.text  # gated before the mutation, so it never fired
 
 
 async def test_shutdown_rejected_by_backend_logs_warning(

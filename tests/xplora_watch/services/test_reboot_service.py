@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.xplora_watch.const import DOMAIN
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
@@ -29,41 +31,28 @@ async def test_reboot_admin_watch_succeeds(hass: HomeAssistant, coordinator: Xpl
     assert "Reboot result: True" in caplog.text
 
 
-async def test_reboot_non_primary_guardian_still_succeeds(
+async def test_reboot_contact_watch_is_blocked(
     hass: HomeAssistant,
     coordinator: XploraDataUpdateCoordinator,
-    graphql_operations,
     caplog,
 ) -> None:
-    # A non-primary (guardianType != "FIRST") guardian can still reboot a watch: the admin gate was
-    # dropped, so controller.reboot() just fires the mutation and the server authorizes it
-    # (ref:XW-007). The Contacts
-    # payload no longer affects the outcome (reboot does not call it).
-    graphql_operations["Contacts"] = {
-        "data": {
-            "contacts": {
-                "contacts": [
-                    {
-                        "contactUser": {"id": "user-id-001", "xcoin": 0},
-                        "guardianType": "SECOND",
-                        "create": 1700000000,
-                        "update": 1700000000,
-                        "name": "Parent Name",
-                        "countryPhoneNumber": "49",
-                        "phoneNumber": "1700000001",
-                    }
-                ]
-            }
-        }
-    }
+    # A Contact (role resolved and not the Guardian: guardianType != "FIRST") may NOT reboot the
+    # watch. The integration restricts this control action to the watch's Guardian as a client policy
+    # (ref:XW-009): the service raises ServiceValidationError and the reboot mutation is never sent.
+    # (This reverses the old ref:XW-007 "non-primary guardian still succeeds" behavior; the chat half
+    # of ref:XW-007 still holds.)
+    coordinator.is_admin = {DEFAULT_WUID: False}
     entry_id = _register_coordinator(hass, coordinator)
     reboot_service = XploraRebootService(hass, entry_id)
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(logging.DEBUG), pytest.raises(ServiceValidationError) as err:
         await reboot_service.async_reboot([DEFAULT_WUID], kwargs={"user": [f"{entry_id} (testuser)"]})
 
-    assert "Reboot failed" not in caplog.text
-    assert "Reboot result: True" in caplog.text
+    # Localized client-policy error, not a server rejection: a translation key + an {action} that
+    # names what was blocked.
+    assert err.value.translation_key == "not_guardian"
+    assert err.value.translation_placeholders == {"action": "reboot the watch"}
+    assert "Reboot result" not in caplog.text  # gated before the mutation, so it never fired
 
 
 async def test_reboot_auth_error_logs_clean_after_bounded_recovery(

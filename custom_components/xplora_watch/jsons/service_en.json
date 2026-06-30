@@ -1,6 +1,6 @@
 {
  "create_alarm": {
-  "description": "Create a new alarm on the watch.",
+  "description": "Create a new alarm on the watch. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -84,7 +84,7 @@
   "name": "Create alarm"
  },
  "create_silent": {
-  "description": "Create a new silent-time window on the watch.",
+  "description": "Create a new silent-time window on the watch. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -168,7 +168,7 @@
   "name": "Create silent time"
  },
  "delete_alarm": {
-  "description": "Delete an alarm from the watch.",
+  "description": "Delete an alarm from the watch. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -240,7 +240,7 @@
   "name": "Delete Message"
  },
  "delete_silent": {
-  "description": "Delete a silent-time window from the watch.",
+  "description": "Delete a silent-time window from the watch. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -356,7 +356,7 @@
   "name": "Read Messages"
  },
  "reboot": {
-  "description": "Reboot the watch.",
+  "description": "Reboot the watch. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose your watch to be rebooted.",
@@ -476,7 +476,7 @@
   "name": "Send Message"
  },
  "set_alarm_enabled": {
-  "description": "Enable or disable an alarm.",
+  "description": "Enable or disable an alarm. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -520,7 +520,7 @@
   "name": "Enable/disable alarm"
  },
  "set_silent_enabled": {
-  "description": "Enable or disable a silent-time window.",
+  "description": "Enable or disable a silent-time window. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -564,7 +564,7 @@
   "name": "Enable/disable silent time"
  },
  "shutdown": {
-  "description": "Power down the watch.",
+  "description": "Power down the watch. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose your watch to be turned off.",
@@ -592,7 +592,7 @@
   "name": "Shut Down Watch"
  },
  "turn_all_alarms_off": {
-  "description": "Disable all alarms on the watch(es).",
+  "description": "Disable all alarms on the watch(es). Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -620,7 +620,7 @@
   "name": "Disable all alarms"
  },
  "turn_all_alarms_on": {
-  "description": "Enable all alarms on the watch(es).",
+  "description": "Enable all alarms on the watch(es). Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -648,7 +648,7 @@
   "name": "Enable all alarms"
  },
  "turn_all_silents_off": {
-  "description": "Disable all silent-time windows on the watch(es).",
+  "description": "Disable all silent-time windows on the watch(es). Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -676,7 +676,7 @@
   "name": "Disable all silent times"
  },
  "turn_all_silents_on": {
-  "description": "Enable all silent-time windows on the watch(es).",
+  "description": "Enable all silent-time windows on the watch(es). Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -704,7 +704,7 @@
   "name": "Enable all silent times"
  },
  "update_alarm": {
-  "description": "Modify an existing alarm's time, repeat days and/or name.",
+  "description": "Modify an existing alarm's time, repeat days and/or name. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",
@@ -796,7 +796,7 @@
   "name": "Update alarm"
  },
  "update_silent": {
-  "description": "Modify an existing silent-time window's start, end and/or repeat days.",
+  "description": "Modify an existing silent-time window's start, end and/or repeat days. Primary guardian only.",
   "fields": {
    "target": {
     "description": "Choose the watch(es) to apply this to.",

@@ -131,11 +131,10 @@ class GQLHandler(HandlerGQL):
         """Run a fire-and-forget device-control mutation (`ShutDown` / `reboot`) and return the
         server's accept/reject `Boolean`.
 
-        No client-side guardian/admin check: the **server** is the sole authority on whether the
-        caller may control the watch. The official app sends the bare `shutDown(uid)`/`reboot(uid)`
-        mutation with no precondition (a non-primary guardian can shut a watch down), so gating it
-        on `guardianType == "FIRST"` here was a client-invented restriction stricter than the real
-        backend authorization (ref:XW-007). Routed through
+        This low-level sender performs no role check: the mutation goes on the wire as a bare
+        `shutDown(uid)` / `reboot(uid)` with no `guardianType` precondition. Restricting control to
+        the watch's Guardian is a client policy applied a layer up, in the Home Assistant service
+        handlers (a Contact's reboot/shutdown is refused there, ref:XW-009). Routed through
         `runAuthorizedGqlQuery_a`, so an `E000004` still raises `AuthError` for the normal recovery.
         """
         data: dict[str, Any] = (await self.runAuthorizedGqlQuery_a(query, variables, operation_name)).get("data", {})

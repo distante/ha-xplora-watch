@@ -1,6 +1,6 @@
 {
  "create_alarm": {
-  "description": "Erstelle einen neuen Wecker auf der Uhr.",
+  "description": "Erstelle einen neuen Wecker auf der Uhr. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -84,7 +84,7 @@
   "name": "Wecker erstellen"
  },
  "create_silent": {
-  "description": "Erstelle ein neues Stille-Zeit-Fenster auf der Uhr.",
+  "description": "Erstelle ein neues Stille-Zeit-Fenster auf der Uhr. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -168,7 +168,7 @@
   "name": "Stille Zeit erstellen"
  },
  "delete_alarm": {
-  "description": "Lösche einen Wecker von der Uhr.",
+  "description": "Lösche einen Wecker von der Uhr. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -240,7 +240,7 @@
   "name": "Nachricht löschen"
  },
  "delete_silent": {
-  "description": "Lösche ein Stille-Zeit-Fenster von der Uhr.",
+  "description": "Lösche ein Stille-Zeit-Fenster von der Uhr. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -356,7 +356,7 @@
   "name": "Nachrichten lesen"
  },
  "reboot": {
-  "description": "Uhr neu starten",
+  "description": "Uhr neu starten. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle deine Uhr aus, die neu gestartet werden soll.",
@@ -476,7 +476,7 @@
   "name": "Nachricht senden"
  },
  "set_alarm_enabled": {
-  "description": "Aktiviere oder deaktiviere einen Wecker.",
+  "description": "Aktiviere oder deaktiviere einen Wecker. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -520,7 +520,7 @@
   "name": "Wecker aktivieren/deaktivieren"
  },
  "set_silent_enabled": {
-  "description": "Aktiviere oder deaktiviere ein Stille-Zeit-Fenster.",
+  "description": "Aktiviere oder deaktiviere ein Stille-Zeit-Fenster. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -564,7 +564,7 @@
   "name": "Stille Zeit aktivieren/deaktivieren"
  },
  "shutdown": {
-  "description": "Uhr herunterfahren",
+  "description": "Uhr herunterfahren. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle deine Uhr aus, die ausgeschaltet werden soll.",
@@ -592,7 +592,7 @@
   "name": "Uhr ausschalten"
  },
  "turn_all_alarms_off": {
-  "description": "Alle Alarme der Uhr(en) deaktivieren.",
+  "description": "Alle Alarme der Uhr(en) deaktivieren. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -620,7 +620,7 @@
   "name": "Alle Alarme deaktivieren"
  },
  "turn_all_alarms_on": {
-  "description": "Alle Alarme der Uhr(en) aktivieren.",
+  "description": "Alle Alarme der Uhr(en) aktivieren. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -648,7 +648,7 @@
   "name": "Alle Alarme aktivieren"
  },
  "turn_all_silents_off": {
-  "description": "Alle Stillzeiten der Uhr(en) deaktivieren.",
+  "description": "Alle Stillzeiten der Uhr(en) deaktivieren. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -676,7 +676,7 @@
   "name": "Alle Stillzeiten deaktivieren"
  },
  "turn_all_silents_on": {
-  "description": "Alle Stillzeiten der Uhr(en) aktivieren.",
+  "description": "Alle Stillzeiten der Uhr(en) aktivieren. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -704,7 +704,7 @@
   "name": "Alle Stillzeiten aktivieren"
  },
  "update_alarm": {
-  "description": "Ändere Zeit, Wiederholungstage und/oder Namen eines Weckers.",
+  "description": "Ändere Zeit, Wiederholungstage und/oder Namen eines Weckers. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",
@@ -796,7 +796,7 @@
   "name": "Wecker aktualisieren"
  },
  "update_silent": {
-  "description": "Ändere Start, Ende und/oder Wiederholungstage eines Stille-Zeit-Fensters.",
+  "description": "Ändere Start, Ende und/oder Wiederholungstage eines Stille-Zeit-Fensters. Nur für den Administrator der Uhr.",
   "fields": {
    "target": {
     "description": "Wähle die Uhr(en), auf die dies angewendet werden soll.",

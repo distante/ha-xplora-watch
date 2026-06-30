@@ -6,6 +6,11 @@
       }
     }
   },
+  "exceptions": {
+    "not_guardian": {
+      "message": "This account is not this watch's primary guardian, so it cannot {action}."
+    }
+  },
   "config": {
     "abort": {
       "already_configured": "Integration has already been configured",

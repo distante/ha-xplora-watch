@@ -935,21 +935,21 @@ class PyXploraApi(PyXplora):
     async def isAdmin(self, wuid: str) -> bool:
         """Whether the logged-in user is the watch's primary (`FIRST`) guardian.
 
-        Informational only -- it drives the `(Admin)` entity-name label, not an authorization
-        gate. Control actions (`shutdown`/`reboot`) are NOT gated on this: the server decides who
-        may control a watch (the official app lets non-primary guardians shut a watch down), so
-        pre-checking `FIRST` here would be stricter than the real backend.
+        Informational only -- it drives the `(Admin)` entity-name label, not an authorization gate.
+        The control-action gate (a Contact may not reboot/shutdown or edit alarms/silent times) is a
+        client policy enforced a layer up, in the Home Assistant service handlers, off the
+        coordinator's per-watch role flag (ref:XW-009) -- not this method and not the backend.
         """
         user_id = self.getUserID()
         contacts = await self.getWatchUserContacts(wuid)
         return any(contact["id"] == user_id and contact["guardianType"] == "FIRST" for contact in contacts)
 
     async def shutdown(self, wuid: str) -> bool:
-        """Send the watch a shutdown command. The server authorizes the caller (no client gate)."""
+        """Send the watch a shutdown command. Control is gated for Contacts a layer up, in the HA service handlers (ref:XW-009)."""
         return await self._gql_handler.shutdown_a(wuid)
 
     async def reboot(self, wuid: str) -> bool:
-        """Send the watch a reboot command. The server authorizes the caller (no client gate)."""
+        """Send the watch a reboot command. Control is gated for Contacts a layer up, in the HA service handlers (ref:XW-009)."""
         return await self._gql_handler.reboot_a(wuid)
 
     async def getFollowRequestWatchCount(self) -> int:

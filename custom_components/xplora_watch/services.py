@@ -9,6 +9,7 @@ from typing import Any
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import ServiceValidationError
 
 from .config import resolve
 from .const import (
@@ -478,6 +479,48 @@ class XploraService:
             return list(coordinator.controller.getWatchUserIDs())
         return targets
 
+    def _guardian_targets(
+        self,
+        coordinator: XploraDataUpdateCoordinator,
+        targets: list[str],
+        action: str,
+        log: Log,
+    ) -> list[str]:
+        """Restrict a Guardian-only service call to the watches this account actually guards.
+
+        Shared gate for the reboot, shutdown and alarm/silent-time CRUD handlers. Expands the special
+        ``all`` target, then drops every watch the account is only a *Contact* of and returns the rest.
+        Restricting these control actions to the watch's Guardian is a client policy (ref:XW-009), not
+        a server rejection.
+
+        Fails open: a watch is dropped only when its role is a *confirmed* Contact; an
+        unknown/unresolved role is treated as a Guardian, so incomplete data never blocks a real
+        Guardian's control. A warning is logged for each skipped watch. If the account guards none of
+        the targeted watches, raises Home Assistant's ``ServiceValidationError`` (localized via the
+        ``not_guardian`` key and worded as a client policy), so the control mutation is never sent.
+
+        ``action`` is the short phrase shown to the user for what was blocked (e.g. ``"reboot the
+        watch"``); it fills the error's ``{action}`` placeholder and the per-watch warning.
+        """
+        resolved = self._resolve_targets(coordinator, targets)
+        allowed: list[str] = []
+        for wuid in resolved:
+            if coordinator.is_confirmed_contact(wuid):
+                log.warning(
+                    "Skipping '%s' for watch %s: this account is a contact of it, not its primary guardian.",
+                    action,
+                    wuid,
+                )
+            else:
+                allowed.append(wuid)
+        if not allowed:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="not_guardian",
+                translation_placeholders={"action": action},
+            )
+        return allowed
+
     async def _refresh_list(self, coordinator: XploraDataUpdateCoordinator, wuid: str, data_key: str) -> None:
         """Re-fetch just the mutated alarm/silent list for one watch and push it to the entities.
 
@@ -693,9 +736,7 @@ class XploraShutdownService(XploraService):
         log = Log(entry_id=entry_id)
         coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
         if isinstance(targets, list):
-            if "all" in targets:
-                targets = coordinator.controller.getWatchUserIDs()
-            for watch in targets:
+            for watch in self._guardian_targets(coordinator, targets, "shut down the watch", log):
                 with self._api_call_guard("Shutdown", entry_id) as guard:
                     accepted = await coordinator._with_recovery(lambda: coordinator.controller.shutdown(watch))
                     log.debug("Shutdown result: %s", accepted)
@@ -717,9 +758,7 @@ class XploraRebootService(XploraService):
         log = Log(entry_id=entry_id)
         coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
         if isinstance(targets, list):
-            if "all" in targets:
-                targets = coordinator.controller.getWatchUserIDs()
-            for watch in targets:
+            for watch in self._guardian_targets(coordinator, targets, "reboot the watch", log):
                 with self._api_call_guard("Reboot", entry_id) as guard:
                     accepted = await coordinator._with_recovery(lambda: coordinator.controller.reboot(watch))
                     log.debug("Reboot result: %s", accepted)
@@ -766,7 +805,7 @@ class XploraAlarmService(XploraService):
         occur_min = time_str_to_minutes(data[ATTR_SERVICE_START])
         week_repeat = weekdays_to_week_repeat(data[ATTR_SERVICE_WEEKDAYS])
         name = data.get(ATTR_SERVICE_NAME, "")
-        for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+        for wuid in self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log):
             with self._api_call_guard("Create alarm", entry_id) as guard:
                 ok = await coordinator._with_recovery(lambda: coordinator.controller.addAlarmTime(wuid, occur_min, week_repeat, name))
                 log.debug("Create alarm on %s: %s", wuid, ok)
@@ -779,13 +818,16 @@ class XploraAlarmService(XploraService):
         data = kwargs["kwargs"]
         entry_id, log, coordinator = self._resolve(data)
         alarm_id = data[ATTR_SERVICE_ALARM_ID]
+        # Gate up front: this handler fires the mutation before the per-watch refresh loop, so the
+        # Contact check must run first or the control mutation would leak out before the raise.
+        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log)
         occur_min = time_str_to_minutes(data[ATTR_SERVICE_START]) if ATTR_SERVICE_START in data else None
         week_repeat = weekdays_to_week_repeat(data[ATTR_SERVICE_WEEKDAYS]) if ATTR_SERVICE_WEEKDAYS in data else None
         name = data.get(ATTR_SERVICE_NAME)
         with self._api_call_guard("Update alarm", entry_id):
             ok = await coordinator._with_recovery(lambda: coordinator.controller.modifyAlarmTime(alarm_id, occur_min, week_repeat, name))
             log.debug("Update alarm %s: %s", alarm_id, ok)
-            for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+            for wuid in targets:
                 await self._refresh_list(coordinator, wuid, ATTR_ALARM)
 
     async def async_delete(self, **kwargs: Any) -> None:
@@ -793,10 +835,11 @@ class XploraAlarmService(XploraService):
         data = kwargs["kwargs"]
         entry_id, log, coordinator = self._resolve(data)
         alarm_id = data[ATTR_SERVICE_ALARM_ID]
+        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log)
         with self._api_call_guard("Delete alarm", entry_id):
             ok = await coordinator._with_recovery(lambda: coordinator.controller.removeAlarmTime(alarm_id))
             log.debug("Delete alarm %s: %s", alarm_id, ok)
-            for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+            for wuid in targets:
                 await self._refresh_list(coordinator, wuid, ATTR_ALARM)
 
     async def async_set_enabled(self, **kwargs: Any) -> None:
@@ -805,13 +848,14 @@ class XploraAlarmService(XploraService):
         entry_id, log, coordinator = self._resolve(data)
         alarm_id = data[ATTR_SERVICE_ALARM_ID]
         enabled = data[ATTR_SERVICE_ENABLED]
+        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log)
         with self._api_call_guard("Set alarm enabled", entry_id):
             if enabled:
                 ok = await coordinator._with_recovery(lambda: coordinator.controller.setEnableAlarmTime(alarm_id))
             else:
                 ok = await coordinator._with_recovery(lambda: coordinator.controller.setDisableAlarmTime(alarm_id))
             log.debug("Set alarm %s enabled=%s: %s", alarm_id, enabled, ok)
-            for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+            for wuid in targets:
                 await self._refresh_list(coordinator, wuid, ATTR_ALARM)
 
     async def async_set_all_enabled(self, enabled: bool, **kwargs: Any) -> None:
@@ -825,7 +869,7 @@ class XploraAlarmService(XploraService):
         data = kwargs["kwargs"]
         entry_id, log, coordinator = self._resolve(data)
         action = "Turn all alarms on" if enabled else "Turn all alarms off"
-        for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+        for wuid in self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log):
             with self._api_call_guard(action, entry_id) as guard:
                 alarms = await coordinator._with_recovery(lambda: coordinator.controller.getWatchAlarm(wuid))
                 if isinstance(alarms, FetchError):
@@ -853,7 +897,7 @@ class XploraSilentService(XploraService):
         start = time_str_to_minutes(data[ATTR_SERVICE_START])
         end = time_str_to_minutes(data[ATTR_SERVICE_END])
         week_repeat = weekdays_to_week_repeat(data[ATTR_SERVICE_WEEKDAYS])
-        for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+        for wuid in self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log):
             with self._api_call_guard("Create silent time", entry_id) as guard:
                 ok = await coordinator._with_recovery(lambda: coordinator.controller.addSilentTime(wuid, start, end, week_repeat))
                 log.debug("Create silent on %s: %s", wuid, ok)
@@ -866,13 +910,14 @@ class XploraSilentService(XploraService):
         data = kwargs["kwargs"]
         entry_id, log, coordinator = self._resolve(data)
         silent_id = data[ATTR_SERVICE_SILENT_ID]
+        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log)
         start = time_str_to_minutes(data[ATTR_SERVICE_START]) if ATTR_SERVICE_START in data else None
         end = time_str_to_minutes(data[ATTR_SERVICE_END]) if ATTR_SERVICE_END in data else None
         week_repeat = weekdays_to_week_repeat(data[ATTR_SERVICE_WEEKDAYS]) if ATTR_SERVICE_WEEKDAYS in data else None
         with self._api_call_guard("Update silent time", entry_id):
             ok = await coordinator._with_recovery(lambda: coordinator.controller.modifySilentTime(silent_id, start, end, week_repeat))
             log.debug("Update silent %s: %s", silent_id, ok)
-            for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+            for wuid in targets:
                 await self._refresh_list(coordinator, wuid, ATTR_SILENT)
 
     async def async_delete(self, **kwargs: Any) -> None:
@@ -880,10 +925,11 @@ class XploraSilentService(XploraService):
         data = kwargs["kwargs"]
         entry_id, log, coordinator = self._resolve(data)
         silent_id = data[ATTR_SERVICE_SILENT_ID]
+        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log)
         with self._api_call_guard("Delete silent time", entry_id):
             ok = await coordinator._with_recovery(lambda: coordinator.controller.removeSilentTime(silent_id))
             log.debug("Delete silent %s: %s", silent_id, ok)
-            for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+            for wuid in targets:
                 await self._refresh_list(coordinator, wuid, ATTR_SILENT)
 
     async def async_set_enabled(self, **kwargs: Any) -> None:
@@ -892,13 +938,14 @@ class XploraSilentService(XploraService):
         entry_id, log, coordinator = self._resolve(data)
         silent_id = data[ATTR_SERVICE_SILENT_ID]
         enabled = data[ATTR_SERVICE_ENABLED]
+        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log)
         with self._api_call_guard("Set silent enabled", entry_id):
             if enabled:
                 ok = await coordinator._with_recovery(lambda: coordinator.controller.setEnableSilentTime(silent_id))
             else:
                 ok = await coordinator._with_recovery(lambda: coordinator.controller.setDisableSilentTime(silent_id))
             log.debug("Set silent %s enabled=%s: %s", silent_id, enabled, ok)
-            for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+            for wuid in targets:
                 await self._refresh_list(coordinator, wuid, ATTR_SILENT)
 
     async def async_set_all_enabled(self, enabled: bool, **kwargs: Any) -> None:
@@ -910,7 +957,7 @@ class XploraSilentService(XploraService):
         data = kwargs["kwargs"]
         entry_id, log, coordinator = self._resolve(data)
         action = "Turn all silents on" if enabled else "Turn all silents off"
-        for wuid in self._resolve_targets(coordinator, data[ATTR_SERVICE_TARGET]):
+        for wuid in self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log):
             with self._api_call_guard(action, entry_id) as guard:
                 silents = await coordinator._with_recovery(lambda: coordinator.controller.getSilentTime(wuid))
                 if isinstance(silents, FetchError):

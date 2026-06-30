@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import voluptuous as vol
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.xplora_watch.const import (
     ATTR_SERVICE_ALARM_ID,
@@ -60,6 +61,10 @@ def _install(hass: HomeAssistant) -> MagicMock:
     coord.async_set_updated_data = MagicMock()
     coord.controller.getWatchUserIDs.return_value = [WUID]
     coord._with_recovery = _passthrough_recovery
+    # Default to a Guardian account (fail-open): the Contact-gate tests below override this. Without
+    # it, a bare MagicMock would return a truthy stub from is_confirmed_contact and wrongly gate
+    # every Guardian-path test.
+    coord.is_confirmed_contact = MagicMock(return_value=False)
     hass.data.setdefault(DOMAIN, {})[ENTRY_ID] = coord
     return coord
 
@@ -287,3 +292,114 @@ def test_turn_all_schemas_require_target_and_user() -> None:
             schema({ATTR_SERVICE_TARGET: [WUID]})  # missing user
         # target + user alone is a complete payload (the handler enumerates entries itself).
         assert schema({ATTR_SERVICE_TARGET: [WUID], ATTR_SERVICE_USER: [ENTRY_ID]})
+
+
+# ----------------------------------------------------------------- Contact gate (Guardian-only CRUD)
+#
+# Alarm/silent CRUD is a Guardian-only control action. A confirmed Contact (role resolved and not the
+# Guardian) is refused with a ServiceValidationError as a client policy (ref:XW-009); the mutation
+# must never be sent. The gate fails open, so the Guardian-path tests above need no extra wiring
+# (``_install`` defaults ``is_confirmed_contact`` to False).
+
+
+async def test_create_alarm_contact_is_blocked(hass: HomeAssistant) -> None:
+    coord = _install(hass)
+    coord.is_confirmed_contact = MagicMock(return_value=True)
+    coord.controller.addAlarmTime = AsyncMock(return_value=True)
+
+    with pytest.raises(ServiceValidationError) as err:
+        await XploraAlarmService(hass, ENTRY_ID).async_create(
+            **_kwargs(**{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""})
+        )
+
+    # Localized client-policy error naming the blocked action.
+    assert err.value.translation_key == "not_guardian"
+    assert err.value.translation_placeholders == {"action": "change the watch's alarms"}
+    coord.controller.addAlarmTime.assert_not_awaited()  # gated before the mutation
+
+
+async def test_update_alarm_contact_is_blocked_before_mutation(hass: HomeAssistant) -> None:
+    # async_update fires the mutation FIRST and only then iterates targets to refresh, so the gate
+    # must run up front -- assert the modify call never happens for a Contact.
+    coord = _install(hass)
+    coord.is_confirmed_contact = MagicMock(return_value=True)
+    coord.controller.modifyAlarmTime = AsyncMock(return_value=True)
+
+    with pytest.raises(ServiceValidationError):
+        await XploraAlarmService(hass, ENTRY_ID).async_update(**_kwargs(**{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_START: "09:30"}))
+
+    coord.controller.modifyAlarmTime.assert_not_awaited()
+
+
+async def test_set_silent_enabled_contact_is_blocked(hass: HomeAssistant) -> None:
+    coord = _install(hass)
+    coord.is_confirmed_contact = MagicMock(return_value=True)
+    coord.controller.setEnableSilentTime = AsyncMock(return_value=True)
+
+    with pytest.raises(ServiceValidationError):
+        await XploraSilentService(hass, ENTRY_ID).async_set_enabled(**_kwargs(**{ATTR_SERVICE_SILENT_ID: "s1", ATTR_SERVICE_ENABLED: True}))
+
+    coord.controller.setEnableSilentTime.assert_not_awaited()
+
+
+async def test_turn_all_alarms_contact_is_blocked(hass: HomeAssistant) -> None:
+    coord = _install(hass)
+    coord.is_confirmed_contact = MagicMock(return_value=True)
+    coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": "ENABLE"}])
+
+    with pytest.raises(ServiceValidationError):
+        await XploraAlarmService(hass, ENTRY_ID).async_set_all_enabled(True, **_kwargs())
+
+    coord.controller.getWatchAlarm.assert_not_awaited()  # not even the enumerate fetch fires
+
+
+async def test_create_alarm_mixed_all_skips_contacts_and_proceeds_for_guardian(hass: HomeAssistant, caplog) -> None:
+    # With the special `all` target on a mixed account, the Guardian watch proceeds and the Contact
+    # watch is skipped with a warning -- no error is raised.
+    coord = _install(hass)
+    coord.controller.getWatchUserIDs.return_value = ["watch-guardian", "watch-contact"]
+    coord.is_confirmed_contact = MagicMock(side_effect=lambda wuid: wuid == "watch-contact")
+    coord.data = {"watch-guardian": {"alarm": [], "silent": []}, "watch-contact": {"alarm": [], "silent": []}}
+    coord.controller.addAlarmTime = AsyncMock(return_value=True)
+    coord.controller.getWatchAlarm = AsyncMock(return_value=[])
+
+    with caplog.at_level(logging.WARNING):
+        await XploraAlarmService(hass, ENTRY_ID).async_create(
+            **{
+                "kwargs": {
+                    ATTR_SERVICE_TARGET: ["all"],
+                    ATTR_SERVICE_USER: [f"{ENTRY_ID} (parent)"],
+                    ATTR_SERVICE_START: "08:00",
+                    ATTR_SERVICE_WEEKDAYS: ["mon"],
+                    ATTR_SERVICE_NAME: "",
+                }
+            }
+        )
+
+    coord.controller.addAlarmTime.assert_awaited_once()  # only the Guardian watch
+    assert coord.controller.addAlarmTime.await_args.args[0] == "watch-guardian"
+    assert "watch-contact" in caplog.text
+    assert "guardian" in caplog.text.lower()
+
+
+async def test_create_alarm_all_contacts_raises_and_sends_nothing(hass: HomeAssistant) -> None:
+    # The account guards NONE of the targeted watches -> the error is raised and no mutation is sent.
+    coord = _install(hass)
+    coord.controller.getWatchUserIDs.return_value = ["contact-1", "contact-2"]
+    coord.is_confirmed_contact = MagicMock(return_value=True)
+    coord.controller.addAlarmTime = AsyncMock(return_value=True)
+
+    with pytest.raises(ServiceValidationError):
+        await XploraAlarmService(hass, ENTRY_ID).async_create(
+            **{
+                "kwargs": {
+                    ATTR_SERVICE_TARGET: ["all"],
+                    ATTR_SERVICE_USER: [f"{ENTRY_ID} (parent)"],
+                    ATTR_SERVICE_START: "08:00",
+                    ATTR_SERVICE_WEEKDAYS: ["mon"],
+                    ATTR_SERVICE_NAME: "",
+                }
+            }
+        )
+
+    coord.controller.addAlarmTime.assert_not_awaited()
