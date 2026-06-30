@@ -50,11 +50,13 @@ async def test_battery_naming_and_unchanged_unique_id(
     """has_entity_name role-only name + branded entity_id seed, with unique_id kept unchanged."""
     sensor = _make_sensor(hass, mock_config_entry_phone, coordinator_with_data, SENSOR_BATTERY)
 
-    # Role-only name (device supplies "Kid One Watch") -> friendly "Kid One Watch Battery".
+    # Role-only name (device supplies "Kid One Watch (Parent Name)") -> friendly
+    # "Kid One Watch (Parent Name) Battery".
     assert sensor._attr_has_entity_name is True
     assert sensor._attr_name == "Battery"
-    # entity_id is set directly (not via suggested_object_id) so it is NOT device-name-prefixed.
-    assert sensor.entity_id == "sensor.xplora_kid_one_watch_battery"
+    # entity_id is set directly (not via suggested_object_id) so it is NOT device-name-prefixed;
+    # the trailing account-token segment ("parent_name") differentiates accounts.
+    assert sensor.entity_id == "sensor.xplora_kid_one_watch_battery_parent_name"
     # unique_id is deliberately preserved (no migration) so existing history is kept.
     assert sensor._attr_unique_id == "kid_one_watch_battery_watch_id_001_user_id_001"
 

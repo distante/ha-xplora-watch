@@ -19,28 +19,29 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from tests.xplora_watch.fixtures.graphql_payloads import make_device_list_payload
 
 # Entities a Contact keeps: online status, steps, xcoin, chat, last-update and the Update button.
+# Slugs carry the trailing account token ("parent_name", from the default login display name).
 CONTACT_KEPT_ENTITY_IDS = {
-    "binary_sensor.xplora_kid_one_watch_state",
-    "sensor.xplora_kid_one_watch_step_day",
-    "sensor.xplora_kid_one_watch_xcoin",
-    "sensor.xplora_kid_one_watch_message",
-    "sensor.xplora_kid_one_watch_last_update",
-    "button.xplora_kid_one_watch_update",
+    "binary_sensor.xplora_kid_one_watch_state_parent_name",
+    "sensor.xplora_kid_one_watch_step_day_parent_name",
+    "sensor.xplora_kid_one_watch_xcoin_parent_name",
+    "sensor.xplora_kid_one_watch_message_parent_name",
+    "sensor.xplora_kid_one_watch_last_update_parent_name",
+    "button.xplora_kid_one_watch_update_parent_name",
 }
 
 # Guardian-only entities a Contact must NOT get (the device tracker is covered by the domain check).
 GUARDIAN_ONLY_ENTITY_IDS = {
-    "sensor.xplora_kid_one_watch_battery",
-    "sensor.xplora_kid_one_watch_distance",
-    "sensor.xplora_kid_one_watch_alarms",
-    "sensor.xplora_kid_one_watch_silents",
-    "sensor.xplora_kid_one_watch_location_history",
-    "binary_sensor.xplora_kid_one_watch_charging",
-    "binary_sensor.xplora_kid_one_watch_safezone",
-    "button.xplora_kid_one_watch_reboot",
-    "button.xplora_kid_one_watch_shutdown",
-    "button.xplora_kid_one_watch_refresh_functions",
-    "device_tracker.xplora_kid_one_watch_tracker",
+    "sensor.xplora_kid_one_watch_battery_parent_name",
+    "sensor.xplora_kid_one_watch_distance_parent_name",
+    "sensor.xplora_kid_one_watch_alarms_parent_name",
+    "sensor.xplora_kid_one_watch_silents_parent_name",
+    "sensor.xplora_kid_one_watch_location_history_parent_name",
+    "binary_sensor.xplora_kid_one_watch_charging_parent_name",
+    "binary_sensor.xplora_kid_one_watch_safezone_parent_name",
+    "button.xplora_kid_one_watch_reboot_parent_name",
+    "button.xplora_kid_one_watch_shutdown_parent_name",
+    "button.xplora_kid_one_watch_refresh_functions_parent_name",
+    "device_tracker.xplora_kid_one_watch_tracker_parent_name",
 }
 
 

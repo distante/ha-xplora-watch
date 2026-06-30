@@ -72,7 +72,8 @@ async def test_history_sensor_naming_and_unique_id(
     assert sensor._attr_has_entity_name is True
     assert sensor._attr_name == "Location History"
     assert sensor.entity_id.startswith("sensor.")
-    assert sensor.entity_id.endswith("_location_history")
+    # Role marker, then the trailing account token ("parent_name", the default display name).
+    assert sensor.entity_id.endswith("_location_history_parent_name")
     assert "_location_history_" in sensor._attr_unique_id
     assert sensor._attr_unique_id == sensor._attr_unique_id.lower()
     assert HISTORY_SENSOR_TYPE.entity_registry_enabled_default is False

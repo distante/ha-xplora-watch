@@ -935,8 +935,8 @@ class PyXploraApi(PyXplora):
     async def isAdmin(self, wuid: str) -> bool:
         """Whether the logged-in user is the watch's primary (`FIRST`) guardian.
 
-        Informational only -- it drives the `(Admin)` entity-name label, not an authorization gate.
-        The control-action gate (a Contact may not reboot/shutdown or edit alarms/silent times) is a
+        Not an authorization gate on its own. The control-action gate (a Contact may not
+        reboot/shutdown or edit alarms/silent times) is a
         client policy enforced a layer up, in the Home Assistant service handlers, off the
         coordinator's per-watch role flag (ref:XW-009) -- not this method and not the backend.
         """

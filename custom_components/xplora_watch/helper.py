@@ -71,6 +71,18 @@ def watch_user_label(controller: PyXploraApi, wuid: str) -> str:
     return name if isinstance(name, str) and name else wuid
 
 
+def account_token(display_name: str, user_id: str) -> str:
+    """Per-account differentiator appended to a watch's device name and entity slug.
+
+    The same physical watch can be linked to several accounts (dad + mom + brother); the token
+    tells those copies apart in the UI. Resolution order is **Account alias -> Account display
+    name (`getUserName()`) -> opaque account id (`getUserID()`)**. The alias is not yet
+    user-settable, so callers pass the Account display name, which is used when non-empty and
+    otherwise falls back to the opaque account id.
+    """
+    return display_name if display_name.strip() else user_id
+
+
 async def async_register_frontend_card(hass: HomeAssistant) -> None:
     """Serve and register the bundled custom Lovelace card as a frontend JS module (once).
 

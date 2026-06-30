@@ -590,7 +590,7 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
             await self._persist_functions_fetch()
 
         # `setDevices` just refreshed `deviceList`, which carries each watch's `guardianType`;
-        # derive is_admin from it (no extra request) so the `(Admin)` label and the setup log stay
+        # derive is_admin from it (no extra request) so guardian gating and the setup log stay
         # correct without the old per-watch `Contacts` call.
         self._update_is_admin(wuids)
 

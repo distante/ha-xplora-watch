@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_USER_ID = "user-id-001"
+DEFAULT_ACCOUNT_NAME = "Parent Name"  # Account display name returned by getUserName()
 DEFAULT_WUID = "watch-id-001"
 DEFAULT_WARD_NAME = "Kid One"
 DEFAULT_WARD_PHONE = "+491700000001"
@@ -22,8 +23,13 @@ def make_login_payload(
     wuid: str = DEFAULT_WUID,
     ward_name: str = DEFAULT_WARD_NAME,
     ward_phone: str = DEFAULT_WARD_PHONE,
+    user_name: str = DEFAULT_ACCOUNT_NAME,
 ) -> dict[str, Any]:
-    """Response for the ``signInWithEmailOrPhone`` mutation (login)."""
+    """Response for the ``signInWithEmailOrPhone`` mutation (login).
+
+    ``user_name`` is the Account display name returned by ``getUserName()``; pass ``""`` to
+    exercise the empty-display-name path (e.g. the account-token fallback to the account id).
+    """
     return {
         "signInWithEmailOrPhone": {
             "id": "session-id-1",
@@ -31,7 +37,7 @@ def make_login_payload(
             "refreshToken": "refresh-token-1",
             "user": {
                 "id": user_id,
-                "name": "Parent Name",
+                "name": user_name,
                 "children": [
                     {
                         "id": "child-rel-1",

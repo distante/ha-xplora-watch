@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -10,7 +11,13 @@ from custom_components.xplora_watch.config import resolve
 from custom_components.xplora_watch.const import CONF_REFRESH_ON_CARD_RENDER, DOMAIN, MANUFACTURER, TRACKER_UPDATE_STR
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
 from custom_components.xplora_watch.entity import XploraBaseEntity
-from tests.xplora_watch.fixtures.graphql_payloads import DEFAULT_WARD_NAME, DEFAULT_WUID
+from tests.xplora_watch.fixtures.graphql_payloads import (
+    DEFAULT_ACCOUNT_NAME,
+    DEFAULT_USER_ID,
+    DEFAULT_WARD_NAME,
+    DEFAULT_WUID,
+    make_login_payload,
+)
 
 
 def _make_entity(config_entry: MockConfigEntry, coordinator: XploraDataUpdateCoordinator, wuid: str = DEFAULT_WUID) -> XploraBaseEntity:
@@ -29,39 +36,74 @@ async def test_init_sets_device_info_and_watch_uid(
     assert device_info["manufacturer"] == MANUFACTURER
     assert device_info["model"] == coordinator_with_data.data[DEFAULT_WUID].get("model")
     assert device_info["sw_version"] == coordinator_with_data.os_version
-    # The device name is human-friendly ("<child> Watch"), with the watch id NOT appended.
+    # The device name is human-friendly ("<child> Watch (<account token>)"), with the watch id
+    # NOT appended. The token differentiates the same watch linked to several accounts; with no
+    # alias set yet it is the Account display name ("Parent Name"), shown verbatim.
     assert entity.watch_name == DEFAULT_WARD_NAME
-    assert device_info["name"] == f"{DEFAULT_WARD_NAME} Watch"
+    assert entity.account_token == DEFAULT_ACCOUNT_NAME
+    assert device_info["name"] == f"{DEFAULT_WARD_NAME} Watch ({DEFAULT_ACCOUNT_NAME})"
     assert DEFAULT_WUID not in device_info["name"]
 
     # has_entity_name composition + concise branded object id (already slugified; DEFAULT_WARD_NAME
-    # "Kid One" -> "kid_one"). Assigned to entity_id by subclasses so HA uses it verbatim (no
-    # device-name prefix).
+    # "Kid One" -> "kid_one", token "Parent Name" -> trailing "parent_name"). Assigned to entity_id
+    # by subclasses so HA uses it verbatim (no device-name prefix).
     assert entity._attr_has_entity_name is True
-    assert entity.branded_object_id("battery") == "xplora_kid_one_watch_battery"
+    assert entity.branded_object_id("battery") == "xplora_kid_one_watch_battery_parent_name"
 
 
-async def test_init_is_admin_true_by_default(
+async def test_account_token_falls_back_to_account_id_when_display_name_empty(
+    hass: HomeAssistant,
+    mock_config_entry_phone: MockConfigEntry,
+    mock_graphql,
+    mock_geocoding_openstreetmap,
+    graphql_operations,
+) -> None:
+    """With no alias and an empty Account display name, the token falls back to the account id.
+
+    The display-name -> account-id step is driven by varying the ``User`` payload: an empty
+    ``user.name`` makes ``getUserName()`` return "", so the resolver yields the opaque account id
+    in both the device name and the entity slug.
+    """
+    graphql_operations["signInWithEmailOrPhone"] = {"data": make_login_payload(user_name="")}
+
+    coord = XploraDataUpdateCoordinator(hass, mock_config_entry_phone)
+    session = aiohttp_client.async_get_clientsession(hass)
+    await coord.init(session=session)
+    await coord.async_update_xplora_data()
+
+    entity = _make_entity(mock_config_entry_phone, coord)
+
+    assert entity.account_token == DEFAULT_USER_ID
+    assert entity._attr_device_info["name"] == f"{DEFAULT_WARD_NAME} Watch ({DEFAULT_USER_ID})"
+    # The account id ("user-id-001") is slugified into the trailing slug segment ("user_id_001").
+    assert entity.branded_object_id("battery") == "xplora_kid_one_watch_battery_user_id_001"
+
+
+async def test_same_watch_two_accounts_get_distinct_names_and_slugs(
     mock_config_entry_phone: MockConfigEntry, coordinator_with_data: XploraDataUpdateCoordinator
 ) -> None:
-    """The default Contacts fixture has guardianType FIRST matching the user, so is_admin is True."""
-    # is_admin is keyed per watch (wuid).
-    assert coordinator_with_data.is_admin[DEFAULT_WUID] is True
+    """Two accounts linking the *same* watch (same wuid) get distinct device names and slugs.
 
-    entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
+    The account token is the only differentiator: with different Account display names the device
+    name suffix and the trailing slug segment diverge, so the two copies are tellable apart even
+    though the watch is physically one device.
+    """
+    # Account A: display name "Parent Name" (fixture default).
+    entity_a = _make_entity(mock_config_entry_phone, coordinator_with_data)
 
-    assert entity.is_admin == " (Admin)-"
+    # Account B: same watch, different account display name -> different token.
+    coordinator_with_data.username = "Other Parent"
+    entity_b = _make_entity(mock_config_entry_phone, coordinator_with_data)
 
+    assert entity_a.watch_uid == entity_b.watch_uid == DEFAULT_WUID  # the one physical watch
 
-async def test_init_is_admin_false_when_not_admin(
-    mock_config_entry_phone: MockConfigEntry, coordinator_with_data: XploraDataUpdateCoordinator
-) -> None:
-    """When the coordinator's is_admin map says False for this watch, the suffix is plain '-'."""
-    coordinator_with_data.is_admin[DEFAULT_WUID] = False
+    assert entity_a._attr_device_info["name"] == f"{DEFAULT_WARD_NAME} Watch ({DEFAULT_ACCOUNT_NAME})"
+    assert entity_b._attr_device_info["name"] == f"{DEFAULT_WARD_NAME} Watch (Other Parent)"
+    assert entity_a._attr_device_info["name"] != entity_b._attr_device_info["name"]
 
-    entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
-
-    assert entity.is_admin == "-"
+    assert entity_a.branded_object_id("battery") == "xplora_kid_one_watch_battery_parent_name"
+    assert entity_b.branded_object_id("battery") == "xplora_kid_one_watch_battery_other_parent"
+    assert entity_a.branded_object_id("battery") != entity_b.branded_object_id("battery")
 
 
 async def test_extra_state_attributes_exposes_refresh_on_card_render(

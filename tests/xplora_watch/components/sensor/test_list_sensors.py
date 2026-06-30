@@ -61,7 +61,8 @@ async def test_list_sensor_naming_and_unique_id(
     assert sensor._attr_has_entity_name is True
     assert sensor._attr_name == "Silents"
     assert sensor.entity_id.startswith("sensor.")
-    assert sensor.entity_id.endswith("_silents")
+    # Role marker, then the trailing account token ("parent_name", the default display name).
+    assert sensor.entity_id.endswith("_silents_parent_name")
     # unique_id is lower-cased with spaces/dashes -> underscores; assert the stable shape.
     assert "_silents_" in sensor._attr_unique_id
     assert sensor._attr_unique_id.endswith(coordinator_with_data.user_id.lower().replace("-", "_"))

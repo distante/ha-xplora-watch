@@ -48,12 +48,12 @@ async def test_full_setup_creates_entities_for_every_platform(
     assert "device_tracker" in platforms_seen
     assert len(entries) > 0
 
-    # Registered entity_ids use the concise branded form and are NOT prefixed with the device
-    # name. Regression guard: setting entity_id directly avoids the device-name prefix that an
-    # overridden suggested_object_id would add (which produced ids like
-    # "sensor.kid_one_watch_xplora_kid_one_watch_battery").
+    # Registered entity_ids use the concise branded form (with the trailing account token) and
+    # are NOT prefixed with the device name. Regression guard: setting entity_id directly avoids
+    # the device-name prefix that an overridden suggested_object_id would add (which produced ids
+    # like "sensor.kid_one_watch_xplora_kid_one_watch_battery").
     entity_ids = {e.entity_id for e in entries}
-    assert "sensor.xplora_kid_one_watch_battery" in entity_ids
+    assert "sensor.xplora_kid_one_watch_battery_parent_name" in entity_ids
     assert all(e.entity_id.split(".", 1)[1].startswith("xplora_") for e in entries)
 
 

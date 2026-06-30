@@ -17,7 +17,7 @@ from homeassistant.util import slugify
 from .config import ResolvedOptions, resolve
 from .const import ATTR_WATCH, ATTRIBUTION, CONF_REFRESH_ON_CARD_RENDER, DEVICE_NAME, DOMAIN, MANUFACTURER, TRACKER_UPDATE_STR
 from .coordinator import XploraDataUpdateCoordinator
-from .helper import watch_user_label
+from .helper import account_token, watch_user_label
 from .log import Log
 
 
@@ -53,30 +53,33 @@ class XploraBaseEntity(CoordinatorEntity[XploraDataUpdateCoordinator], RestoreEn
         self.watch_uid = wuid
         self._unsub_dispatchers: list[Callable[[], None]] = []
 
-        self.is_admin = " (Admin)-" if coordinator.is_admin.get(wuid, None) else "-"
-
         self.watch_name = watch_user_label(coordinator.controller, self.watch_uid)
+        # Per-account token (alias -> account display name -> account id) appended to the device
+        # name and entity slug so the same watch linked to several accounts stays distinguishable.
+        self.account_token = account_token(coordinator.username, coordinator.user_id)
 
-        # Human-friendly device name (e.g. "Kid One Watch"); the watch id is intentionally
-        # omitted -- `identifiers` already makes the device unique.
+        # Human-friendly device name (e.g. "Kid One Watch (Mom)"); the watch id is intentionally
+        # omitted -- `identifiers` already makes the device unique. The token is shown verbatim.
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._config_entry.unique_id}_{self.watch_uid}")},
             manufacturer=MANUFACTURER,
             model=coordinator.data[self.watch_uid].get("model", DEVICE_NAME),
-            name=f"{self.watch_name} {ATTR_WATCH.title()}",
+            name=f"{self.watch_name} {ATTR_WATCH.title()} ({self.account_token})",
             sw_version=coordinator.os_version,
             configuration_url="https://github.com/distante/ha-xplora-watch/blob/main/README.md",
         )
 
     def branded_object_id(self, *parts: str) -> str:
-        """Build a concise, integration-branded object id, e.g. `xplora_kid_one_watch_battery`.
+        """Build a concise, integration-branded object id, e.g. `xplora_kid_one_watch_battery_mom`.
 
         Combine with the platform's ``ENTITY_ID_FORMAT`` and assign to ``self.entity_id``: a
         self-set entity_id is used verbatim by HA, whereas overriding ``suggested_object_id``
         would route through ``object_id_base`` and get the device name ("Kid One Watch") prefixed
-        onto it. `parts` are the entity's role-specific tokens (sensor key, alarm time, …).
+        onto it. `parts` are the entity's role-specific tokens (sensor key, alarm time, …); the
+        slugified account token is appended as the trailing segment so slugs stay collision-free
+        across accounts that link the same watch.
         """
-        return slugify(" ".join(["xplora", self.watch_name, ATTR_WATCH, *parts]))
+        return slugify(" ".join(["xplora", self.watch_name, ATTR_WATCH, *parts, self.account_token]))
 
     @property
     def resolved_options(self) -> ResolvedOptions:
