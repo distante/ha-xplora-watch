@@ -8,7 +8,13 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.xplora_watch.config import resolve
-from custom_components.xplora_watch.const import CONF_REFRESH_ON_CARD_RENDER, DOMAIN, MANUFACTURER, TRACKER_UPDATE_STR
+from custom_components.xplora_watch.const import (
+    CONF_ACCOUNT_ALIAS,
+    CONF_REFRESH_ON_CARD_RENDER,
+    DOMAIN,
+    MANUFACTURER,
+    TRACKER_UPDATE_STR,
+)
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
 from custom_components.xplora_watch.entity import XploraBaseEntity
 from tests.xplora_watch.fixtures.graphql_payloads import (
@@ -104,6 +110,46 @@ async def test_same_watch_two_accounts_get_distinct_names_and_slugs(
     assert entity_a.branded_object_id("battery") == "xplora_kid_one_watch_battery_parent_name"
     assert entity_b.branded_object_id("battery") == "xplora_kid_one_watch_battery_other_parent"
     assert entity_a.branded_object_id("battery") != entity_b.branded_object_id("battery")
+
+
+async def test_user_set_alias_drives_device_name_and_slug(
+    mock_config_entry_phone: MockConfigEntry, coordinator_with_data: XploraDataUpdateCoordinator
+) -> None:
+    """A user-set alias (captured in entry.data at setup) is the account token.
+
+    It overrides the account display name in both the device name suffix and the trailing slug
+    segment, so the user's chosen label ("Dad") -- not the Xplora profile name ("Parent Name") --
+    differentiates this copy of the watch.
+    """
+    coordinator_with_data.hass.config_entries.async_update_entry(
+        mock_config_entry_phone, data={**mock_config_entry_phone.data, CONF_ACCOUNT_ALIAS: "Dad"}
+    )
+
+    entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
+
+    assert entity.account_token == "Dad"
+    assert entity._attr_device_info["name"] == f"{DEFAULT_WARD_NAME} Watch (Dad)"
+    assert entity.branded_object_id("battery") == "xplora_kid_one_watch_battery_dad"
+
+
+async def test_alias_option_overrides_data_for_device_name(
+    mock_config_entry_phone: MockConfigEntry, coordinator_with_data: XploraDataUpdateCoordinator
+) -> None:
+    """An options-flow alias edit (entry.options) overrides the setup alias (entry.data).
+
+    This is the "edit the alias later" path: the device name reflects the edited value because the
+    token is recomputed on each load from options -> data.
+    """
+    coordinator_with_data.hass.config_entries.async_update_entry(
+        mock_config_entry_phone,
+        data={**mock_config_entry_phone.data, CONF_ACCOUNT_ALIAS: "Dad"},
+        options={**mock_config_entry_phone.options, CONF_ACCOUNT_ALIAS: "Mom"},
+    )
+
+    entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
+
+    assert entity.account_token == "Mom"
+    assert entity._attr_device_info["name"] == f"{DEFAULT_WARD_NAME} Watch (Mom)"
 
 
 async def test_extra_state_attributes_exposes_refresh_on_card_render(

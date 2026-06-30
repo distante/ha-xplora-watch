@@ -107,6 +107,12 @@ CONF_SIGNIN_TYP: Final = "signin_typ"
 CONF_TIMEZONE: Final = "timezone"
 CONF_USERLANG: Final = "userlang"
 CONF_WATCHES: Final = "watches"
+# User-chosen, human-readable label for the account (e.g. "Dad", "Mom"). The same physical watch
+# can be linked to several accounts; the alias is the top of the account-token chain that
+# differentiates those copies in the device name and entity slug (alias → account display name →
+# opaque account id). Captured (required, pre-filled with the display name) in the config flow and
+# editable later via the options flow; options override data.
+CONF_ACCOUNT_ALIAS: Final = "account_alias"
 
 SENSOR_BATTERY: Final = "battery"
 SENSOR_DISTANCE: Final = "distance"

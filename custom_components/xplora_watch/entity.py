@@ -14,7 +14,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
-from .config import ResolvedOptions, resolve
+from .config import ResolvedOptions, resolve, resolve_account_alias
 from .const import ATTR_WATCH, ATTRIBUTION, CONF_REFRESH_ON_CARD_RENDER, DEVICE_NAME, DOMAIN, MANUFACTURER, TRACKER_UPDATE_STR
 from .coordinator import XploraDataUpdateCoordinator
 from .helper import account_token, watch_user_label
@@ -54,9 +54,16 @@ class XploraBaseEntity(CoordinatorEntity[XploraDataUpdateCoordinator], RestoreEn
         self._unsub_dispatchers: list[Callable[[], None]] = []
 
         self.watch_name = watch_user_label(coordinator.controller, self.watch_uid)
-        # Per-account token (alias -> account display name -> account id) appended to the device
-        # name and entity slug so the same watch linked to several accounts stays distinguishable.
-        self.account_token = account_token(coordinator.username, coordinator.user_id)
+        # Per-account token (user-set alias -> account display name -> account id) appended to the
+        # device name and entity slug so the same watch linked to several accounts stays
+        # distinguishable. The alias resolves options -> data (an options-flow edit overrides the
+        # value captured at setup); it is recomputed on every load, so the *device name* reflects an
+        # alias edit immediately, while the *slug* is frozen at entity creation by HA's registry.
+        self.account_token = account_token(
+            resolve_account_alias(config_entry),
+            coordinator.username,
+            coordinator.user_id,
+        )
 
         # Human-friendly device name (e.g. "Kid One Watch (Mom)"); the watch id is intentionally
         # omitted -- `identifiers` already makes the device unique. The token is shown verbatim.

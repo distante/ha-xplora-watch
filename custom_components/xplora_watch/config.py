@@ -33,6 +33,7 @@ from typing import Any, Callable, Generic, TypeVar
 from homeassistant.const import CONF_LANGUAGE, CONF_SCAN_INTERVAL, STATE_OFF
 
 from .const import (
+    CONF_ACCOUNT_ALIAS,
     CONF_AUTO_FETCH_HISTORY,
     CONF_AUTO_MARK_READ,
     CONF_HISTORY_RETENTION_DAYS,
@@ -62,6 +63,7 @@ __all__ = [
     "CONF_SPECS",
     "ResolvedOptions",
     "resolve",
+    "resolve_account_alias",
     "resolve_language",
 ]
 
@@ -196,3 +198,21 @@ def resolve_language(entry: Any) -> str:
     options = getattr(entry, "options", None) or {}
     data = getattr(entry, "data", None) or {}
     return str(options.get(CONF_LANGUAGE, data.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)))
+
+
+def resolve_account_alias(entry: Any) -> str:
+    """Resolve the user-set account alias from an entry using options -> data -> "".
+
+    The alias is captured in ``ConfigEntry.data`` at setup (config flow) and may be edited later
+    via the options flow, which stores it in ``ConfigEntry.options`` -- so options (the edit) win
+    over data (the original). It is intentionally **not** part of the :class:`ResolvedOptions`
+    registry: that models options-only, static-default settings, whereas the alias follows the
+    same options -> data fallback as the UI language (see :func:`resolve_language`).
+
+    Returns ``""`` when never set; :func:`~.helper.account_token` then falls back to the account
+    display name and finally the opaque account id. Accepts any object exposing ``options`` and
+    ``data`` mappings (works with config entries and test mocks).
+    """
+    options = getattr(entry, "options", None) or {}
+    data = getattr(entry, "data", None) or {}
+    return str(options.get(CONF_ACCOUNT_ALIAS, data.get(CONF_ACCOUNT_ALIAS, "")))

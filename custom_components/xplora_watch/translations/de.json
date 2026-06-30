@@ -54,6 +54,16 @@
         },
         "description": "Kontoauthentifizierung",
         "title": "HA Xplora® Watch einrichten"
+      },
+      "alias": {
+        "data": {
+          "account_alias": "Konto-Alias"
+        },
+        "data_description": {
+          "account_alias": "Wird an den Gerätenamen dieser Uhr (z. B. „Dana Watch (Mama)“) und an die Entitäts-IDs angehängt, damit sich zwei Konten, die mit derselben Uhr verknüpft sind, unterscheiden lassen. Vorausgefüllt mit Ihrem Xplora-Kontonamen – ändern Sie ihn beliebig („Papa“, „Mama“, „Bruder Tom“)."
+        },
+        "description": "Geben Sie diesem Konto einen kurzen Namen, damit Sie es von anderen Konten unterscheiden können, die mit derselben Uhr verknüpft sind.",
+        "title": "Konto-Alias"
       }
     }
   },
@@ -82,14 +92,16 @@
           "remove_message": "gelöschte Nachrichten anzeigen?",
           "scan_interval": "Aktualisierungsintervall (Aus deaktiviert das Abrufen)",
           "scan_interval_functions": "Aktualisierungsintervall für Funktionen (Alarme, Stille Zeiten, Sicherheitszonen)",
-          "watches": "Uhren"
+          "watches": "Uhren",
+          "account_alias": "Konto-Alias"
         },
         "data_description": {
           "history_retention_days": "Wie lange der optionale Standortverlauf-Sensor vergangene Positionen speichert. Home Assistant bewahrt weit mehr auf als das ~3-Tage-Fenster der Xplora®-App. Nur relevant, sobald der Standortverlauf-Sensor aktiviert ist.",
           "scan_interval": "Wie oft Home Assistant die Uhren nach Akku, Standort und Status abfragt. Aus (Standard) deaktiviert das automatische Abrufen — Aktualisierungen erfolgen dann nur über den Dienst xplora_watch.see oder durch Drücken der Schaltfläche „Update“.",
           "scan_interval_functions": "Wie oft die sich selten ändernden Alarme, Stille Zeiten und Sicherheitszonen abgerufen werden. Jede erfordert eine eigene Anfrage pro Uhr, daher standardmäßig Aus, um den Datenverkehr zu minimieren. Wähle „Bei jedem Abruf“, um sie bei jeder Aktualisierung zu laden, oder rufe sie bei Bedarf über den Dienst xplora_watch.refresh_functions oder durch Tippen auf die Zähler-Kacheln der Karte ab.",
           "auto_fetch_history": "Wenn aktiviert, ruft die Integration den Standortverlauf des Vortags täglich um 01:00 Uhr lokaler Zeit ab — nur wenn die Daten für diesen Tag noch nicht im Cache vorhanden sind. Praktisch, wenn ein wachsendes Standortarchiv gewünscht wird, ohne dafür eine eigene Automatisierung mit xplora_watch.fetch_history einzurichten.",
-          "refresh_on_card_render": "Wenn aktiviert, fordern die benutzerdefinierten Dashboard-Karten beim Anzeigen sofort frische Daten an (Alarme und Stille Zeiten, Standort und Chat). Standardmäßig Aus, um den Datenverkehr zu minimieren; zeigen mehrere Karten in einer Ansicht dieselbe Uhr, wird jeder Datensatz nur einmal aktualisiert."
+          "refresh_on_card_render": "Wenn aktiviert, fordern die benutzerdefinierten Dashboard-Karten beim Anzeigen sofort frische Daten an (Alarme und Stille Zeiten, Standort und Chat). Standardmäßig Aus, um den Datenverkehr zu minimieren; zeigen mehrere Karten in einer Ansicht dieselbe Uhr, wird jeder Datensatz nur einmal aktualisiert.",
+          "account_alias": "Benennt das Uhrengerät dieses Kontos beim nächsten Neuladen um (z. B. „Dana Watch (Mama)“). Vorhandene Entitäts-IDs behalten ihren ursprünglichen Namen, sodass darauf verweisende Automationen und Dashboards weiter funktionieren."
         },
         "title": "weitere Einstellungen für HA Xplora® Watch"
       }

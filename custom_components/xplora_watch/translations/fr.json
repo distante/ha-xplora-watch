@@ -49,6 +49,16 @@
         },
         "description": "Authentification du compte",
         "title": "Configurer HA Xplora® Watch"
+      },
+      "alias": {
+        "data": {
+          "account_alias": "Alias du compte"
+        },
+        "data_description": {
+          "account_alias": "Ajouté au nom de l'appareil de la montre (par ex. « Dana Watch (Maman) ») et aux identifiants d'entités afin que deux comptes liés à la même montre restent distinguables. Pré-rempli avec le nom de votre compte Xplora — modifiez-le à votre guise (« Papa », « Maman », « Frère Tom »)."
+        },
+        "description": "Donnez à ce compte un nom court pour le distinguer des autres comptes liés à la même montre.",
+        "title": "Alias du compte"
       }
     }
   },
@@ -77,14 +87,16 @@
           "remove_message": "afficher les messages supprimés ?",
           "scan_interval": "Intervalle de mise à jour (Désactivé arrête l'interrogation)",
           "scan_interval_functions": "Intervalle de mise à jour des fonctions (alarmes, plages silencieuses, zones sûres)",
-          "watches": "Montres"
+          "watches": "Montres",
+          "account_alias": "Alias du compte"
         },
         "data_description": {
           "history_retention_days": "Durée de conservation des positions passées par le capteur d'historique de position (optionnel). Home Assistant en conserve bien plus que la fenêtre d'environ 3 jours de l'application Xplora®. N'a d'effet qu'une fois le capteur d'historique de position activé.",
           "scan_interval": "Fréquence à laquelle Home Assistant interroge les montres pour la batterie, la position et l'état. Désactivé (par défaut) arrête l'interrogation automatique — les mises à jour proviennent alors uniquement du service xplora_watch.see ou d'un appui sur le bouton Mettre à jour.",
           "scan_interval_functions": "Fréquence à laquelle les alarmes, plages silencieuses et zones sûres (qui changent rarement) sont récupérées. Chacune nécessite une requête distincte par montre, c'est pourquoi elles sont Désactivées par défaut afin de limiter le trafic. Choisissez « À chaque interrogation » pour les actualiser à chaque mise à jour, ou récupérez-les à la demande via le service xplora_watch.refresh_functions ou en touchant les tuiles de comptage sur la carte.",
           "auto_fetch_history": "Lorsque activé, l'intégration récupère l'historique de position de la veille à 01:00 (heure locale) — uniquement si les données de ce jour ne sont pas déjà en cache. Pratique pour constituer une archive de positions sans créer d'automatisation utilisant xplora_watch.fetch_history.",
-          "refresh_on_card_render": "Lorsque activé, les cartes personnalisées du tableau de bord demandent des données fraîches dès leur affichage (alarmes et plages silencieuses, position et messages). Désactivé par défaut afin de limiter le trafic ; si plusieurs cartes d'une vue affichent la même montre, chaque jeu de données n'est actualisé qu'une seule fois."
+          "refresh_on_card_render": "Lorsque activé, les cartes personnalisées du tableau de bord demandent des données fraîches dès leur affichage (alarmes et plages silencieuses, position et messages). Désactivé par défaut afin de limiter le trafic ; si plusieurs cartes d'une vue affichent la même montre, chaque jeu de données n'est actualisé qu'une seule fois.",
+          "account_alias": "Renomme l'appareil montre de ce compte au prochain rechargement (par ex. « Dana Watch (Maman) »). Les identifiants d'entités existants conservent leur nom d'origine, afin que les automatisations et tableaux de bord qui les référencent continuent de fonctionner."
         },
         "title": "paramètres supplémentaires pour HA Xplora® Watch"
       }

@@ -49,6 +49,16 @@
         },
         "description": "Autenticación de cuenta",
         "title": "Configurar HA Xplora® Watch"
+      },
+      "alias": {
+        "data": {
+          "account_alias": "Alias de la cuenta"
+        },
+        "data_description": {
+          "account_alias": "Se añade al nombre del dispositivo del reloj (p. ej. «Dana Watch (Mamá)») y a los identificadores de las entidades para que dos cuentas que vinculan el mismo reloj sean distinguibles. Se rellena con el nombre de tu cuenta de Xplora; cámbialo por lo que prefieras («Papá», «Mamá», «Hermano Tom»)."
+        },
+        "description": "Asigna a esta cuenta un nombre corto para distinguirla de otras cuentas vinculadas al mismo reloj.",
+        "title": "Alias de la cuenta"
       }
     }
   },
@@ -77,14 +87,16 @@
           "remove_message": "¿mostrar mensajes eliminados?",
           "scan_interval": "Intervalo de actualización (Desactivado detiene el sondeo)",
           "scan_interval_functions": "Intervalo de actualización de funciones (alarmas, tiempos de silencio, zonas seguras)",
-          "watches": "Relojes"
+          "watches": "Relojes",
+          "account_alias": "Alias de la cuenta"
         },
         "data_description": {
           "history_retention_days": "Cuánto tiempo conserva el sensor opcional de historial de ubicaciones las posiciones pasadas. Home Assistant retiene mucho más que la ventana de ~3 días de la app Xplora®. Solo importa una vez que actives el sensor de historial de ubicaciones.",
           "scan_interval": "Con qué frecuencia Home Assistant consulta los relojes para batería, ubicación y estado. Desactivado (predeterminado) detiene el sondeo automático — las actualizaciones llegan entonces solo desde el servicio xplora_watch.see o al pulsar el botón Actualizar.",
           "scan_interval_functions": "Con qué frecuencia se obtienen las alarmas, los tiempos de silencio y las zonas seguras, que rara vez cambian. Cada una requiere una petición por reloj, por lo que está Desactivado de forma predeterminada para minimizar el tráfico. Elige «En cada sondeo» para actualizarlas en cada actualización, u obtenlas cuando quieras con el servicio xplora_watch.refresh_functions o tocando las casillas de recuento en la tarjeta.",
           "auto_fetch_history": "Cuando está activado, la integración obtiene el historial de ubicaciones del día anterior a la 01:00 (hora local) — solo si los datos de ese día aún no están en caché. Útil para mantener un archivo de ubicaciones sin necesidad de configurar una automatización propia con xplora_watch.fetch_history.",
-          "refresh_on_card_render": "Cuando está activado, las tarjetas personalizadas del panel solicitan datos actualizados en cuanto se muestran (alarmas y tiempos de silencio, ubicación y chat). Desactivado de forma predeterminada para minimizar el tráfico; si varias tarjetas de una vista muestran el mismo reloj, cada conjunto de datos se actualiza solo una vez."
+          "refresh_on_card_render": "Cuando está activado, las tarjetas personalizadas del panel solicitan datos actualizados en cuanto se muestran (alarmas y tiempos de silencio, ubicación y chat). Desactivado de forma predeterminada para minimizar el tráfico; si varias tarjetas de una vista muestran el mismo reloj, cada conjunto de datos se actualiza solo una vez.",
+          "account_alias": "Renombra el dispositivo del reloj de esta cuenta en la próxima recarga (p. ej. «Dana Watch (Mamá)»). Los identificadores de entidad existentes conservan su nombre original, por lo que las automatizaciones y los paneles que los referencian siguen funcionando."
         },
         "title": "configuraciones adicionales para HA Xplora® Watch"
       }

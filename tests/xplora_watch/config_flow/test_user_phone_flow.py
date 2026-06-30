@@ -6,7 +6,8 @@ from typing import Any
 
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.xplora_watch.const import DOMAIN
+from custom_components.xplora_watch.const import CONF_ACCOUNT_ALIAS, DOMAIN
+from tests.xplora_watch.fixtures.graphql_payloads import DEFAULT_ACCOUNT_NAME
 
 PHONE_USER_INPUT: dict[str, Any] = {
     "country_code": "+49",
@@ -16,6 +17,13 @@ PHONE_USER_INPUT: dict[str, Any] = {
     "userlang": "en-GB",
     "language": "en",
 }
+
+
+def _alias_default(result) -> str:
+    """Pull the pre-filled default of the alias field out of a form's data_schema."""
+    schema = result["data_schema"].schema
+    alias_key = next(key for key in schema if getattr(key, "schema", key) == CONF_ACCOUNT_ALIAS)
+    return alias_key.default() if callable(alias_key.default) else alias_key.default
 
 
 async def _start_phone_flow(hass):
@@ -30,14 +38,26 @@ async def test_user_phone_no_input_shows_form(hass) -> None:
     assert result["step_id"] == "user_phone"
 
 
-async def test_user_phone_happy_path_creates_entry(hass, mock_graphql) -> None:
+async def test_user_phone_valid_credentials_advance_to_alias_step(hass, mock_graphql) -> None:
+    """After valid credentials the flow advances to the alias step, pre-filled with getUserName()."""
     result = await _start_phone_flow(hass)
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"], PHONE_USER_INPUT)
 
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "alias"
+    assert _alias_default(result) == DEFAULT_ACCOUNT_NAME
+
+
+async def test_user_phone_happy_path_creates_entry_with_alias(hass, mock_graphql) -> None:
+    result = await _start_phone_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], PHONE_USER_INPUT)
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_ACCOUNT_ALIAS: "Mom"})
+
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "Xplora®"
-    assert result["data"] == PHONE_USER_INPUT
+    assert result["data"] == {**PHONE_USER_INPUT, CONF_ACCOUNT_ALIAS: "Mom"}
 
 
 async def test_user_phone_invalid_phone_shows_error(hass, mock_graphql, graphql_operations) -> None:

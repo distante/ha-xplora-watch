@@ -40,8 +40,9 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.util.read_only_dict import ReadOnlyDict
 
-from .config import resolve_language
+from .config import resolve_account_alias, resolve_language
 from .const import (
+    CONF_ACCOUNT_ALIAS,
     CONF_AUTO_FETCH_HISTORY,
     CONF_AUTO_MARK_READ,
     CONF_HISTORY_RETENTION_DAYS,
@@ -130,12 +131,13 @@ async def validate_input(hass: core.HomeAssistant, data: dict[str, Any]) -> dict
         raise PhoneOrEmailFail()
 
     try:
-        await sign_in(hass=hass, data=data)
+        controller = await sign_in(hass=hass, data=data)
     except LoginError as err:
         raise LoginError(err.error_message) from err
 
-    # Return info that you want to store in the config entry.
-    return {"title": f"{MANUFACTURER}"}
+    # Return info that you want to store in the config entry. `username` is the Account display
+    # name (`getUserName()`), surfaced so the following alias step can pre-fill its field with it.
+    return {"title": f"{MANUFACTURER}", "username": controller.getUserName()}
 
 
 def validate_options_input(user_input: dict[str, Any]) -> dict[str, str]:
@@ -161,6 +163,11 @@ class XploraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Xplora® Watch Version 2."""
 
     VERSION = 1
+
+    # Carried from the credentials step into the alias step (set once login validates).
+    _account_data: dict[str, Any]
+    _account_title: str
+    _default_alias: str
 
     @staticmethod
     @callback
@@ -195,9 +202,9 @@ class XploraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
 
             if info:
-                return self.async_create_entry(title=info["title"], data=user_input)
+                return self._advance_to_alias(user_input, info)
 
-        return self.async_show_form(step_id="user_phone", data_schema=vol.Schema(DATA_SCHEMA_PHONE), errors=errors, last_step=True)
+        return self.async_show_form(step_id="user_phone", data_schema=vol.Schema(DATA_SCHEMA_PHONE), errors=errors, last_step=False)
 
     async def async_step_user_email(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Handle the initial step."""
@@ -222,9 +229,40 @@ class XploraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
 
             if info:
-                return self.async_create_entry(title=info["title"], data=user_input)
+                return self._advance_to_alias(user_input, info)
 
-        return self.async_show_form(step_id="user_email", data_schema=vol.Schema(DATA_SCHEMA_EMAIL), errors=errors, last_step=True)
+        return self.async_show_form(step_id="user_email", data_schema=vol.Schema(DATA_SCHEMA_EMAIL), errors=errors, last_step=False)
+
+    @callback
+    def _advance_to_alias(self, user_input: dict[str, Any], info: dict[str, str]) -> ConfigFlowResult:
+        """Stash the validated credentials + display name, then move to the alias step."""
+        self._account_data = user_input
+        self._account_title = info["title"]
+        self._default_alias = info["username"]
+        return self.async_show_form(
+            step_id="alias",
+            data_schema=self._alias_schema(self._default_alias),
+            last_step=True,
+        )
+
+    @staticmethod
+    def _alias_schema(default: str) -> vol.Schema:
+        """Schema for the alias step: one required text field, pre-filled with ``default``."""
+        return vol.Schema({vol.Required(CONF_ACCOUNT_ALIAS, default=default): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))})
+
+    async def async_step_alias(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Capture the user-chosen Account alias, then create the entry.
+
+        The alias is the top of the account-token chain that differentiates the same watch when it
+        is linked to several accounts (see helper.account_token; ref:XW-010). It is required and
+        pre-filled with the Account display name, so a user who does not care can accept the
+        default in one tap.
+        """
+        if user_input is not None:
+            data = {**self._account_data, CONF_ACCOUNT_ALIAS: user_input[CONF_ACCOUNT_ALIAS]}
+            return self.async_create_entry(title=self._account_title, data=data)
+
+        return self.async_show_form(step_id="alias", data_schema=self._alias_schema(self._default_alias), last_step=True)
 
 
 class XploraOptionsFlowHandler(OptionsFlowWithConfigEntry):
@@ -376,7 +414,7 @@ class XploraOptionsFlowHandler(OptionsFlowWithConfigEntry):
         watches = await controller.setDevices()
         _options = self.config_entry.options
 
-        schema = OrderedDict()
+        schema: OrderedDict[Any, Any] = OrderedDict()
         schema[vol.Required(CONF_WATCHES, default=_options.get(CONF_WATCHES, watches))] = SelectSelector(
             SelectSelectorConfig(
                 options=[
@@ -391,6 +429,14 @@ class XploraOptionsFlowHandler(OptionsFlowWithConfigEntry):
                 multiple=True,
                 mode=SelectSelectorMode.LIST,
             )
+        )
+        # Editable Account alias (see helper.account_token; ref:XW-010). Pre-fill with the current
+        # resolved alias; for a pre-alias entry that has none yet, fall back to the Account display
+        # name so the field is never blank. The submitted value is stored in options, which
+        # `resolve_account_alias` reads before data, so an edit here wins over the setup value and
+        # the device name updates on the next load.
+        schema[vol.Required(CONF_ACCOUNT_ALIAS, default=resolve_account_alias(self.config_entry) or controller.getUserName())] = (
+            TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))
         )
 
         language: str = resolve_language(self.config_entry)

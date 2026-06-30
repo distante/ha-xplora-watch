@@ -9,6 +9,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.xplora_watch.const import (
+    CONF_ACCOUNT_ALIAS,
     CONF_AUTO_FETCH_HISTORY,
     CONF_HISTORY_RETENTION_DAYS,
     CONF_HOME_LATITUDE,
@@ -110,3 +111,18 @@ async def test_submit_auto_fetch_history_stored(hass, mock_config_entry_phone: M
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_AUTO_FETCH_HISTORY] is True
+
+
+async def test_submit_account_alias_stored(hass, mock_config_entry_phone: MockConfigEntry, mock_graphql, mock_home_zone) -> None:
+    """The account alias submitted in the options flow is stored in the entry's options.
+
+    Because ``resolve_account_alias`` reads options before data, this edited value wins over any
+    alias captured at setup, so the device name reflects it on the next load (ref:XW-010).
+    """
+    result = await hass.config_entries.options.async_init(mock_config_entry_phone.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        _base_submit_input(**{CONF_ACCOUNT_ALIAS: "Mom"}),
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_ACCOUNT_ALIAS] == "Mom"

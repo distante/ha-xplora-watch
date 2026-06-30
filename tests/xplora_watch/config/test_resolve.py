@@ -18,9 +18,11 @@ from custom_components.xplora_watch.config import (
     ConfKeys,
     ResolvedOptions,
     resolve,
+    resolve_account_alias,
     resolve_language,
 )
 from custom_components.xplora_watch.const import (
+    CONF_ACCOUNT_ALIAS,
     DEFAULT_HISTORY_RETENTION_DAYS,
     DEFAULT_LANGUAGE,
     DEFAULT_SCAN_INTERVAL,
@@ -128,3 +130,17 @@ def test_resolve_language_fallback_chain(options: dict, data: dict, expected: st
     """Language resolves options -> data -> default."""
     entry = SimpleNamespace(options=options, data=data)
     assert resolve_language(entry) == expected
+
+
+@pytest.mark.parametrize(
+    ("options", "data", "expected"),
+    [
+        ({CONF_ACCOUNT_ALIAS: "Mom"}, {CONF_ACCOUNT_ALIAS: "Dad"}, "Mom"),  # options (edited) win over data (setup)
+        ({}, {CONF_ACCOUNT_ALIAS: "Dad"}, "Dad"),  # fall back to the alias captured at setup
+        ({}, {}, ""),  # unset -> empty string (account_token then falls back to display name / id)
+    ],
+)
+def test_resolve_account_alias_fallback_chain(options: dict, data: dict, expected: str) -> None:
+    """The account alias resolves options -> data -> "" (empty when never set)."""
+    entry = SimpleNamespace(options=options, data=data)
+    assert resolve_account_alias(entry) == expected

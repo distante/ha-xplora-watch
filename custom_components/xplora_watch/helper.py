@@ -71,16 +71,20 @@ def watch_user_label(controller: PyXploraApi, wuid: str) -> str:
     return name if isinstance(name, str) and name else wuid
 
 
-def account_token(display_name: str, user_id: str) -> str:
+def account_token(alias: str, display_name: str, user_id: str) -> str:
     """Per-account differentiator appended to a watch's device name and entity slug.
 
     The same physical watch can be linked to several accounts (dad + mom + brother); the token
     tells those copies apart in the UI. Resolution order is **Account alias -> Account display
-    name (`getUserName()`) -> opaque account id (`getUserID()`)**. The alias is not yet
-    user-settable, so callers pass the Account display name, which is used when non-empty and
-    otherwise falls back to the opaque account id.
+    name (`getUserName()`) -> opaque account id (`getUserID()`)**: the user-set alias wins when
+    present, then the Account display name when non-empty, otherwise the opaque account id (which
+    always exists, so the token is never empty).
     """
-    return display_name if display_name.strip() else user_id
+    if alias.strip():
+        return alias
+    if display_name.strip():
+        return display_name
+    return user_id
 
 
 async def async_register_frontend_card(hass: HomeAssistant) -> None:
