@@ -101,6 +101,31 @@ function refreshOnRenderEnabled(stateObj) {
   return !!(stateObj && stateObj.attributes && stateObj.attributes[ATTR_REFRESH_ON_CARD_RENDER]);
 }
 
+// True when the bound entity genuinely does not exist (as opposed to merely not having a state yet).
+// `hass.states[id]` is empty for BOTH a still-coming-up entity and one that will never appear -- the
+// classic case being a card left pointing at an old entity id after a slug rename. The entity
+// registry (`hass.entities`) tells them apart: a live entity is listed there before it ever pushes a
+// state, so "no state AND not in the registry" means gone/renamed. Returns false while the registry
+// itself hasn't loaded (older HA, or the first frames after connect) -- we must not cry "missing"
+// before we can actually tell, or a normal cold start would flash a false error.
+function entityMissing(hass, entityId) {
+  if (!hass || !hass.entities) return false;
+  if (hass.states && hass.states[entityId]) return false;
+  return !hass.entities[entityId];
+}
+
+// Inner HTML for a `.placeholder` shown when the bound entity has no state: name the entity and, when
+// it is genuinely absent, say so (with a fix-the-card hint) instead of "Waiting for …" -- which would
+// otherwise spin forever on an id that will never resolve.
+function entityStatusHtml(hass, entityId, esc) {
+  const code = `<code>${esc(entityId)}</code>`;
+  if (entityMissing(hass, entityId)) {
+    return `<div class="empty-title">Entity ${code} not found</div>
+        <div class="empty-sub">It may have been renamed or removed — edit the card and pick the current entity.</div>`;
+  }
+  return `<div>Waiting for ${code}…</div>`;
+}
+
 // De-duplicate the on-demand refreshes triggered when cards render. A single dashboard view can
 // hold several cards bound to the same watch (overview + alarm list + chat); without this each
 // would fire its own service call on render. NOTE: the integration's coordinator is the
@@ -232,7 +257,13 @@ class XploraWatchCard extends HTMLElement {
     // busy dashboard doesn't rebuild + re-wire the whole list on every unrelated update.
     const entity = this._config.entity;
     const changed =
-      !this._built || !prev || prev.states[entity] !== hass.states[entity] || prev.locale !== hass.locale;
+      !this._built ||
+      !prev ||
+      prev.states[entity] !== hass.states[entity] ||
+      prev.locale !== hass.locale ||
+      // The state object stays undefined whether the entity is coming up or missing, so also
+      // re-render when the registry verdict flips (e.g. registry loads and confirms it's gone).
+      entityMissing(prev, entity) !== entityMissing(hass, entity);
     if (changed) this._render();
     // Once the bound sensor exists, optionally pull fresh data on first show (deduped).
     this._maybeRefreshOnRender();
@@ -247,6 +278,16 @@ class XploraWatchCard extends HTMLElement {
   _stateObj() {
     if (!this._hass || !this._config) return undefined;
     return this._hass.states[this._config.entity];
+  }
+
+  // The bound entity is "ready" once it exists and reports a usable state (not still coming up or
+  // dropped out). This is the modern stand-in for the old attribute-based "sensor not ready" gate:
+  // services target the watch via this entity's id (resolved to its device server-side), so the
+  // only thing an action needs is for the entity to actually be alive. Gating every fire on it keeps
+  // an auto-refresh (or an early tap) from firing the instant a dashboard loads and toasting an error.
+  _isReady() {
+    const s = this._stateObj();
+    return !!(s && s.state !== "unavailable" && s.state !== "unknown" && s.state !== "");
   }
 
   _kind() {
@@ -341,9 +382,8 @@ class XploraWatchCard extends HTMLElement {
   // Explicit header-button refresh: always fires (records the dedup window so a co-rendered card's
   // auto-refresh doesn't immediately re-fire), and spins the icon until the call resolves.
   async _refreshNow() {
-    if (!this._hass || this._refreshing) return;
+    if (!this._hass || this._refreshing || !this._isReady()) return; // no bound entity alive to refresh
     const base = this._base();
-    if (!base.entity_id[0]) return; // sensor not ready yet
     this._refreshing = true;
     markRefreshed(this._refreshKey());
     if (this._mode === "list") this._render();
@@ -361,17 +401,18 @@ class XploraWatchCard extends HTMLElement {
   // Deduped so several cards in one view don't each refresh the same watch.
   _maybeRefreshOnRender() {
     if (this._autoRefreshDone) return;
-    const s = this._stateObj();
-    if (!s) return; // sensor not ready yet -- try again on the next hass push
+    if (!this._isReady()) return; // bound entity not alive yet -- try again on the next hass push
     this._autoRefreshDone = true;
-    if (!refreshOnRenderEnabled(s)) return;
-    const base = this._base();
-    if (!base.entity_id[0]) return;
-    fireDeduped(this._refreshKey(), () => this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, base, undefined, false));
+    if (!refreshOnRenderEnabled(this._stateObj())) return;
+    fireDeduped(this._refreshKey(), () =>
+      this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, this._base(), undefined, false)
+    );
   }
 
   async _callService(service, payload) {
-    if (!this._hass) return;
+    // No-op until the bound entity is alive: an early save/toggle/delete tap would otherwise fire a
+    // doomed call and surface a spurious "no watch" error toast.
+    if (!this._hass || !this._isReady()) return;
     this._busy = true;
     this._refreshSaveButton();
     try {
@@ -660,7 +701,7 @@ class XploraWatchCard extends HTMLElement {
       ${this._header()}
       <div class="placeholder">
         <ha-icon icon="mdi:watch"></ha-icon>
-        <div>Waiting for <code>${this._esc(this._config.entity)}</code>…</div>
+        ${entityStatusHtml(this._hass, this._config.entity, (v) => this._esc(v))}
       </div>`;
   }
 
@@ -1868,7 +1909,7 @@ class XploraWatchOverviewCard extends HTMLElement {
   _maybeRefreshOnRender(map) {
     if (this._autoRefreshDone) return;
     const primary = this._config.entity && this._hass.states[this._config.entity];
-    if (!primary) return; // bound entity not ready yet -- retry on the next hass push
+    if (!this._usable(primary)) return; // bound entity not alive yet -- retry on the next hass push
     this._autoRefreshDone = true;
     if (!refreshOnRenderEnabled(primary)) return;
     const listEntity = map.alarms || map.silents;
@@ -2840,7 +2881,10 @@ class XploraWatchChatCard extends HTMLElement {
     // `last_changed` only moves when the state *value* changes, so a refresh would otherwise be
     // skipped and new messages wouldn't appear until a full page reload.
     const s = hass.states[this._config.entity];
-    const sig = (s ? `${s.state}@${s.last_updated}` : "∅") + "|" + this._locale();
+    // The "no state" case splits into coming-up vs missing (see entityMissing); fold that into the
+    // signature so the placeholder re-renders when the registry verdict flips, not only on state.
+    const empty = entityMissing(hass, this._config.entity) ? "missing" : "∅";
+    const sig = (s ? `${s.state}@${s.last_updated}` : empty) + "|" + this._locale();
     if (!this._built || sig !== this._sig) {
       this._sig = sig;
       this._render();
@@ -3084,7 +3128,7 @@ class XploraWatchChatCard extends HTMLElement {
     if (!s) {
       this._listEl.innerHTML = `<div class="placeholder">
         <ha-icon icon="mdi:message-text-outline"></ha-icon>
-        <div>Waiting for <code>${this._esc(this._config.entity)}</code>…</div>
+        ${entityStatusHtml(this._hass, this._config.entity, (v) => this._esc(v))}
       </div>`;
     } else {
       const msgs = this._messages();

@@ -12,6 +12,9 @@ entity-registry `entity_id` (history/long-term statistics follow the registry re
 
 from __future__ import annotations
 
+import logging
+
+import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -98,6 +101,27 @@ async def test_manually_renamed_entity_is_left_untouched(
 
     assert registry.async_get("sensor.my_custom_battery") is not None
     assert registry.async_get(f"sensor.{NEW_BATTERY_OBJECT_ID}") is None
+
+
+async def test_mismatch_skip_is_logged_at_debug(
+    hass: HomeAssistant,
+    mock_config_entry_phone: MockConfigEntry,
+    coordinator: XploraDataUpdateCoordinator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When a known-watch entity is skipped because its current id isn't the pre-token default (a
+    user rename, or a kind whose slug isn't its unique-id core), the skip is observable at DEBUG so
+    an under-migration isn't silent."""
+    registry = er.async_get(hass)
+    _seed(registry, mock_config_entry_phone, "sensor", BATTERY_UNIQUE_ID, "my_custom_battery")
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.xplora_watch"):
+        await _async_migrate_entity_slugs(hass, mock_config_entry_phone, coordinator, [DEFAULT_WUID])
+
+    assert any(
+        record.levelno == logging.DEBUG and "sensor.my_custom_battery" in record.getMessage() and "slug" in record.getMessage().lower()
+        for record in caplog.records
+    ), "the mismatch-skip path must log the skipped entity at DEBUG"
 
 
 async def test_pre_alias_entry_uses_account_id_fallback_when_display_name_empty(

@@ -10,7 +10,6 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/distante/ha-xplora-watch/issues",
   "requirements": [
-    "aiofiles>=23",
     "backoff>=2",
     "requests>=2",
     "aiohttp>=3.12",
@@ -18,5 +17,5 @@
     "dataclasses-json>=0.6",
     "security>=1.2"
   ],
-  "version": "v1.2.0"
+  "version": "v1.2.1"
 }

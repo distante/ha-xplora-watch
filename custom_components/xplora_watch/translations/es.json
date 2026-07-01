@@ -6,6 +6,20 @@
       }
     }
   },
+  "exceptions": {
+    "not_guardian": {
+      "message": "Esta cuenta no es el tutor principal de este reloj, por lo que no puede {action}."
+    },
+    "no_xplora_device": {
+      "message": "Selecciona al menos un dispositivo de reloj Xplora® para esta acción."
+    },
+    "watch_offline": {
+      "message": "No se pudo contactar con el reloj, por lo que la acción no se aplicó; puede estar apagado o sin conexión. Vuelve a intentarlo cuando vuelva a estar en línea."
+    },
+    "nothing_actioned": {
+      "message": "No se pudo actuar sobre ninguno de los relojes seleccionados: {details}."
+    }
+  },
   "config": {
     "abort": {
       "already_configured": "La integración ya ha sido configurada",

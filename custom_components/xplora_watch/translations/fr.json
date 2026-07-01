@@ -6,6 +6,20 @@
       }
     }
   },
+  "exceptions": {
+    "not_guardian": {
+      "message": "Ce compte n'est pas le tuteur principal de cette montre, il ne peut donc pas {action}."
+    },
+    "no_xplora_device": {
+      "message": "Sélectionnez au moins un appareil montre Xplora® pour cette action."
+    },
+    "watch_offline": {
+      "message": "La montre n'a pas pu être jointe, l'action n'a donc pas été appliquée — elle est peut-être éteinte ou hors ligne. Réessayez lorsqu'elle sera de nouveau en ligne."
+    },
+    "nothing_actioned": {
+      "message": "Aucune des montres sélectionnées n'a pu être actionnée : {details}."
+    }
+  },
   "config": {
     "abort": {
       "already_configured": "L'intégration a déjà été configurée",

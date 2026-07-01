@@ -164,10 +164,12 @@ class XploraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    # Carried from the credentials step into the alias step (set once login validates).
-    _account_data: dict[str, Any]
-    _account_title: str
-    _default_alias: str
+    # Carried from the credentials step into the alias step (set once login validates). Real defaults,
+    # not bare annotations, so an out-of-order step entry degrades to empty carry-over (a clean flow
+    # error) instead of an AttributeError on an attribute that was never assigned.
+    _account_data: dict[str, Any] = {}
+    _account_title: str = ""
+    _default_alias: str = ""
 
     @staticmethod
     @callback

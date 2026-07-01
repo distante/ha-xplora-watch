@@ -44,13 +44,19 @@ def watch_user_label(controller: PyXploraApi, wuid: str) -> str:
 
 
 def account_token(alias: str, display_name: str, user_id: str) -> str:
-    """Per-account differentiator appended to a watch's device name and entity slug.
+    """Per-account differentiator for a watch's device name (and, when it slugifies, its entity slug).
 
     The same physical watch can be linked to several accounts (dad + mom + brother); the token
     tells those copies apart in the UI. Resolution order is **Account alias -> Account display
     name (`getUserName()`) -> opaque account id (`getUserID()`)**: the user-set alias wins when
     present, then the Account display name when non-empty, otherwise the opaque account id (which
-    always exists, so the token is never empty).
+    always exists, so the returned *string* is never empty and the device name always has a label).
+
+    That non-empty string drives the device name verbatim ("Dana Watch (👍)"). It does **not**
+    guarantee an entity-slug segment: a non-slugifiable alias (emoji / punctuation-only) is returned
+    as-is here but drops out of the slug (see `entity.branded_object_id`), so the entity id falls
+    back to its pre-token form and Home Assistant de-duplicates any collision with a numeric suffix.
+    That is cosmetic; we deliberately do not reject or rewrite such an alias.
     """
     if alias.strip():
         return alias

@@ -314,7 +314,17 @@ async def _async_migrate_entity_slugs(
         if current_object_id == new_object_id:
             continue  # already tokened -- idempotent no-op
         if current_object_id != old_object_id:
-            continue  # user-renamed (or a kind whose slug isn't its unique-id core) -- leave it
+            # A known watch's entity we chose not to touch: either the user renamed it, or its slug
+            # isn't derived from its unique-id core (so `old_object_id` is a wrong guess). Leaving it
+            # is the fail-safe, but log at DEBUG so an unexpected under-migration is observable rather
+            # than silent (e.g. if a future change shifts how slugs are derived).
+            _LOGGER.debug(
+                "Skipping slug migration for '%s': current object id '%s' is not the pre-token default '%s'",
+                entity.entity_id,
+                current_object_id,
+                old_object_id,
+            )
+            continue
         new_entity_id = f"{entity.domain}.{new_object_id}"
         if entity_registry.async_get(new_entity_id) is not None:
             _LOGGER.debug("Cannot migrate slug '%s' -> '%s': target already exists", entity.entity_id, new_entity_id)

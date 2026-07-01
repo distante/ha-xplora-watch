@@ -3,7 +3,6 @@ pip>=25.3
 -r requirements-ha.txt
 
 # Runtime requirements of the vendored xplora_watch integration (custom_components/xplora_watch/manifest.json)
-aiofiles>=23
 backoff>=2
 requests>=2
 geopy>=2.4
