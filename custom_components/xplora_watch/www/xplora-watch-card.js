@@ -443,15 +443,28 @@ class XploraWatchCard extends HTMLElement {
   }
 
   // Fire a one-time refresh when the card is first shown, if the user enabled "refresh on render".
-  // Deduped so several cards in one view don't each refresh the same watch.
+  // Deduped so several cards in one view don't each refresh the same watch; the shared handle drives
+  // the header refresh spinner (same indicator as the explicit refresh button) while it's in flight.
   _maybeRefreshOnRender() {
     if (this._autoRefreshDone) return;
     if (!this._isReady()) return; // bound entity not alive yet -- try again on the next hass push
     this._autoRefreshDone = true;
     if (!refreshOnRenderEnabled(this._stateObj())) return;
-    trackInflight(this._refreshKey(), () =>
+    const { promise, inflight } = trackInflight(this._refreshKey(), () =>
       this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, this._base(), undefined, false)
     );
+    if (!inflight) return; // suppressed within the dedup window -- nothing live to spin for
+    this._setRefreshing(true);
+    // The shared promise never rejects, so a failed run clears the spinner silently (no toast) --
+    // the coordinator's fail-loud outcome surfaces in the list on the next state push.
+    promise.then(() => this._setRefreshing(false));
+  }
+
+  // Toggle the header refresh spinner and re-render. Only re-renders in list mode (mirroring
+  // `_refreshNow`) so an open add/edit popup isn't torn down mid-typing.
+  _setRefreshing(on) {
+    this._refreshing = on;
+    if (this._mode === "list") this._render();
   }
 
   async _callService(service, payload) {
@@ -1794,6 +1807,7 @@ class XploraWatchOverviewCard extends HTMLElement {
     this._sig = "";
     this._deviceId = null;
     this._autoRefreshDone = false; // guard so "refresh on render" fires once per card instance
+    this._refreshing = false; // an on-render auto-refresh is in flight (drives the status-row spinner)
     this._modal = null; // popup host for the embedded alarm/silent management card
     this._embedded = null; // the <xplora-watch-card> shown in the popup (kept hass-live)
     this._onKeyDown = (ev) => {
@@ -1950,26 +1964,49 @@ class XploraWatchOverviewCard extends HTMLElement {
 
   // When the user enabled "refresh on render", refresh this watch's data once on first show:
   // functions (alarms/silent times) via a list sensor, and location via the watch's `update`
-  // button. Both are deduped so several cards in one view only refresh each data set once.
+  // button. Both are deduped so several cards in one view only refresh each data set once, and the
+  // shared `trackInflight` handles drive the status-row loading indicator until both settle.
   _maybeRefreshOnRender(map) {
     if (this._autoRefreshDone) return;
     const primary = this._config.entity && this._hass.states[this._config.entity];
     if (!this._usable(primary)) return; // bound entity not alive yet -- retry on the next hass push
     this._autoRefreshDone = true;
     if (!refreshOnRenderEnabled(primary)) return;
+    const handles = [];
     const listEntity = map.alarms || map.silents;
     if (listEntity) {
       const a = (this._hass.states[listEntity] || {}).attributes || {};
       if (a.wuid && a.entry_id) {
-        trackInflight(`${SERVICE.REFRESH_FUNCTIONS}|${a.entry_id}|${a.wuid}`, () =>
-          this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, { entity_id: [listEntity] }, undefined, false)
+        handles.push(
+          trackInflight(`${SERVICE.REFRESH_FUNCTIONS}|${a.entry_id}|${a.wuid}`, () =>
+            this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, { entity_id: [listEntity] }, undefined, false)
+          )
         );
       }
     }
     const updateBtn = this._buttonEntities().find((id) => id.endsWith("_update"));
     if (updateBtn) {
-      trackInflight(`button.press|${updateBtn}`, () => this._hass.callService("button", "press", { entity_id: updateBtn }));
+      handles.push(
+        trackInflight(`button.press|${updateBtn}`, () => this._hass.callService("button", "press", { entity_id: updateBtn }))
+      );
     }
+    this._trackRefreshLoading(handles);
+  }
+
+  // Show the "Updating…" indicator in the last-update status row while any on-render refresh is
+  // actually live, and clear it once ALL of them settle. A caller inside the dedup window gets
+  // `inflight: false` (nothing live to await) so it shows no spinner. The shared promises never
+  // reject, so a failed run clears the spinner silently -- the coordinator's fail-loud outcome
+  // surfaces in the status row on the next state push, not as a toast.
+  _trackRefreshLoading(handles) {
+    const live = handles.filter((h) => h && h.inflight);
+    if (!live.length) return;
+    this._refreshing = true;
+    this._render();
+    Promise.all(live.map((h) => h.promise)).then(() => {
+      this._refreshing = false;
+      this._render();
+    });
   }
 
   _dist(m) {
@@ -2033,9 +2070,15 @@ class XploraWatchOverviewCard extends HTMLElement {
     if (charging) statusBits.push(`<span class="charging"><ha-icon icon="mdi:flash"></ha-icon>Charging</span>`);
 
     // Last-update outcome from the backend `last_update` sensor (covers manual + background polls).
+    // While an on-render auto-refresh is in flight, show an "Updating…" spinner in its place; the
+    // resolved chip returns once the refresh settles (the data beneath stays visible throughout).
     const lu = st("lastupdate");
     const luStatus = statusFromSensor(lu);
-    if (luStatus) {
+    if (this._refreshing) {
+      statusBits.push(
+        `<span class="upd refreshing" title="Updating…"><ha-icon class="spin" icon="mdi:refresh"></ha-icon>Updating…</span>`
+      );
+    } else if (luStatus) {
       const m = STATUS_META[luStatus];
       statusBits.push(
         `<span class="upd ${luStatus}" title="${this._esc(m.label)}"><ha-icon icon="${m.icon}"></ha-icon>${this._esc(relTimeIso(lu.last_updated))}</span>`
@@ -2666,6 +2709,9 @@ class XploraWatchOverviewCard extends HTMLElement {
       .upd.success { color: var(--success-color, #43a047); }
       .upd.warning { color: var(--warning-color, #ffa600); }
       .upd.error { color: var(--error-color, #db4437); }
+      /* On-render refresh in flight: neutral text + a spinning refresh icon (keyframes below). */
+      .upd.refreshing { color: var(--secondary-text-color); }
+      .upd ha-icon.spin { animation: xplora-spin 0.9s linear infinite; }
 
       .row { display: flex; align-items: center; gap: 12px; width: 100%; box-sizing: border-box;
         padding: 12px 16px; border-top: 1px solid var(--divider-color);
