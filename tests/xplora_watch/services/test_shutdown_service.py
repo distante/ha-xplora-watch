@@ -50,20 +50,23 @@ async def test_shutdown_contact_watch_is_blocked(
     assert "Shutdown result" not in caplog.text  # gated before the mutation, so it never fired
 
 
-async def test_shutdown_rejected_by_backend_logs_warning(
+async def test_shutdown_rejected_by_backend_logs_warning_and_raises_watch_offline(
     hass: HomeAssistant,
     coordinator: XploraDataUpdateCoordinator,
     graphql_operations,
     caplog,
 ) -> None:
-    # The backend refuses the command (False) -- e.g. the watch is off/offline. The service must say
-    # so, not silently debug-log it as if it worked.
+    # The backend refuses the command (False) -- e.g. the watch is off/offline. The service says so
+    # via a per-watch warning, and -- since that refused watch was the only target, so nothing
+    # succeeded -- surfaces the homogeneous `watch_offline` error toast (ADR 0004), never a silent
+    # success.
     graphql_operations["ShutDown"] = {"data": {"ShutDown": False}}
     devices = await setup_service_target(hass, coordinator)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING), pytest.raises(ServiceValidationError) as err:
         await hass.services.async_call(DOMAIN, ATTR_SERVICE_SHUTDOWN, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
+    assert err.value.translation_key == "watch_offline"
     assert "Shutdown was not accepted" in caplog.text
 
 

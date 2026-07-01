@@ -187,33 +187,38 @@ async def test_refresh_skips_on_fetch_error(hass: HomeAssistant) -> None:
 
 
 async def test_create_alarm_auth_error_is_clean(hass: HomeAssistant, caplog) -> None:
+    # Recovery exhausted -> a clean per-type warning (no raw traceback); nothing succeeded, so the
+    # call surfaces an error toast rather than returning silently (best-effort fan-out, ADR 0004).
     coord = _install(hass)
     coord.controller.addAlarmTime = AsyncMock(side_effect=AuthError())
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING), pytest.raises(ServiceValidationError) as err:
         await _service(hass, coord, XploraAlarmService).async_create(
             **_kwargs(coord, **{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""})
         )
 
+    assert err.value.translation_key == "nothing_actioned"
     assert "session token expired" in caplog.text
     coord.async_set_updated_data.assert_not_called()
 
 
 async def test_create_alarm_stops_after_first_recoverable_failure(hass: HomeAssistant, caplog) -> None:
-    """Ban defense: a per-watch loop must STOP after the first recoverable error instead of
-    hammering the remaining watches (which would hit the same expired token / rate limit). With two
-    targets and the first call raising RateLimitError, the controller is called exactly once.
+    """Ban defense (break-account, ADR 0004): a recoverable error stops the REST of that account's
+    watches instead of hammering them (they'd hit the same expired token / rate limit). With two
+    targets on one account and the first call raising RateLimitError, the controller is called
+    exactly once; nothing succeeded, so the call also surfaces an error toast.
     """
     coord = _install(hass, wuids=("watch-1", "watch-2"))
     coord.controller.addAlarmTime = AsyncMock(side_effect=RateLimitError("429"))
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING), pytest.raises(ServiceValidationError) as err:
         await _service(hass, coord, XploraAlarmService).async_create(
             **_kwargs(
                 coord, wuids=("watch-1", "watch-2"), **{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""}
             )
         )
 
+    assert err.value.translation_key == "nothing_actioned"
     coord.controller.addAlarmTime.assert_awaited_once()  # broke after watch-1; watch-2 never attempted
     assert "rate limit" in caplog.text
 
@@ -291,14 +296,16 @@ async def test_turn_all_alarms_skips_watch_on_fetch_error(hass: HomeAssistant, c
 
 
 async def test_turn_all_alarms_stops_after_first_recoverable_failure(hass: HomeAssistant, caplog) -> None:
-    """Ban defense: a recoverable error on the first toggle aborts the rest (no refresh either)."""
+    """Ban defense: a recoverable error on the first toggle aborts the rest (no refresh either); the
+    watch was not actioned, so the call surfaces an error toast (best-effort fan-out, ADR 0004)."""
     coord = _install(hass)
     coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": "ENABLE"}, {"id": "a2", "status": "ENABLE"}])
     coord.controller.setEnableAlarmTime = AsyncMock(side_effect=RateLimitError("429"))
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING), pytest.raises(ServiceValidationError) as err:
         await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord))
 
+    assert err.value.translation_key == "nothing_actioned"
     coord.controller.setEnableAlarmTime.assert_awaited_once()  # broke after a1; a2 never attempted
     coord.async_set_updated_data.assert_not_called()
     assert "rate limit" in caplog.text

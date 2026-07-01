@@ -12,6 +12,12 @@
     },
     "no_xplora_device": {
       "message": "Wähle mindestens ein Xplora®-Uhrengerät für diese Aktion aus."
+    },
+    "watch_offline": {
+      "message": "Die Uhr konnte nicht erreicht werden, daher wurde die Aktion nicht ausgeführt – sie ist möglicherweise ausgeschaltet oder offline. Bitte versuche es erneut, sobald sie wieder online ist."
+    },
+    "nothing_actioned": {
+      "message": "Keine der ausgewählten Uhren konnte bearbeitet werden: {details}."
     }
   },
   "config": {

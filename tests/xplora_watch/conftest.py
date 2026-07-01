@@ -239,6 +239,53 @@ async def coordinator_with_data(coordinator: XploraDataUpdateCoordinator) -> Xpl
     return coordinator
 
 
+@pytest.fixture
+def make_account(
+    hass: HomeAssistant,
+    mock_graphql: aioresponses,
+    mock_geocoding_openstreetmap: aioresponses,
+):
+    """Factory: build a REAL second (third, ...) account coordinator for multi-account fan-out tests.
+
+    Mirrors the ``coordinator`` fixture but with a distinct config-entry ``unique_id`` and its own
+    watch(es), so a single service call can span several accounts (ADR 0004). Every account hits the
+    same mocked GraphQL endpoint; the account's own watch identity is imposed by overriding
+    ``getWatchUserIDs`` (the same knob ``test_device_targeting`` uses). Small keyword knobs force a
+    Contact role (``contacts=``) so the Guardian pre-filter drops it, driven from the single seam.
+    """
+
+    async def _make(
+        unique_id: str,
+        wuids: tuple[str, ...] = (DEFAULT_WUID,),
+        *,
+        contacts: tuple[str, ...] = (),
+    ) -> XploraDataUpdateCoordinator:
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Xplora®",
+            unique_id=unique_id,
+            data={
+                CONF_EMAIL: unique_id,
+                CONF_PASSWORD: "secret",
+                CONF_USERLANG: "en-GB",
+                CONF_TIMEZONE: "Europe/Berlin",
+                CONF_LANGUAGE: "en",
+            },
+            options={**DEFAULT_OPTIONS, CONF_WATCHES: list(wuids)},
+        )
+        entry.add_to_hass(hass)
+        coord = XploraDataUpdateCoordinator(hass, entry)
+        session = aiohttp_client.async_get_clientsession(hass)
+        await coord.init(session=session)
+        # Impose this account's own watch identity + Guardian/Contact roles (the login payload only
+        # knows DEFAULT_WUID; every account shares the one mocked endpoint).
+        coord.controller.getWatchUserIDs = lambda w=tuple(wuids): list(w)  # type: ignore[method-assign]
+        coord.is_admin = {wuid: wuid not in contacts for wuid in wuids}
+        return coord
+
+    return _make
+
+
 async def setup_service_target(
     hass: HomeAssistant,
     coordinator: XploraDataUpdateCoordinator,

@@ -11,12 +11,18 @@ MANUFACTURER: Final = "Xplora®"
 DEVICE_NAME: Final = "Xplora® Watch"
 ATTRIBUTION: Final = "Data provided by Xplora®"
 
-# Dev/screenshot-only escape hatch (see demo.py): an entry whose sign-in email is this sentinel
-# gets `DemoPyXploraApi` -- a network-free stand-in seeded with synthetic watch data -- instead of
-# a real `PyXploraApi`. The `.invalid` TLD (RFC 6761) can never be a real Xplora account, so a real
-# user would never type it and a real entry can never carry it: matching on the email alone is a
-# safe, self-sufficient switch that needs no environment variable and never touches a real entry.
+# Dev/screenshot-only escape hatch (see demo.py): an entry whose sign-in email is one of these
+# sentinels gets `DemoPyXploraApi` -- a network-free stand-in seeded with synthetic watch data --
+# instead of a real `PyXploraApi`. The `.invalid` TLD (RFC 6761) can never be a real Xplora account,
+# so a real user would never type it and a real entry can never carry it: matching on the email alone
+# is a safe, self-sufficient switch that needs no environment variable and never touches a real entry.
+# The sentinels seed different accounts so the multi-account service fan-out (ADR 0004) can be
+# exercised in the live UI: a primary Guardian, a second Guardian (a different child), a Contact, and
+# a Guardian whose watch is offline (control actions are refused -> the `watch_offline` surfacing).
 DEMO_ACCOUNT_EMAIL: Final = "demo@xplora-watch.invalid"
+DEMO_SECOND_PARENT_ACCOUNT_EMAIL: Final = "demo-second-parent@xplora-watch.invalid"
+DEMO_CONTACT_ACCOUNT_EMAIL: Final = "demo-contact@xplora-watch.invalid"
+DEMO_OFFLINE_ACCOUNT_EMAIL: Final = "demo-offline@xplora-watch.invalid"
 
 URL_OPENSTREETMAP = "https://nominatim.openstreetmap.org/reverse?lat={}&lon={}&format=jsonv2&accept-language={}"
 URL_MAPBOX = "https://api.mapbox.com/geocoding/v5/mapbox.places/{},{}.json?types=address&limit=1&access_token={}&language={}"

@@ -12,6 +12,12 @@
     },
     "no_xplora_device": {
       "message": "Select at least one Xplora® watch device for this action."
+    },
+    "watch_offline": {
+      "message": "The watch could not be reached, so the action was not applied — it may be switched off or offline. Please try again when it is back online."
+    },
+    "nothing_actioned": {
+      "message": "None of the selected watches could be actioned: {details}."
     }
   },
   "config": {

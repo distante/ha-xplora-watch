@@ -71,9 +71,11 @@ async def test_dispatches_voice_short_video_and_image_handlers_once_each(
     ):
         await hass.services.async_call(DOMAIN, ATTR_SERVICE_READ_MSG, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
-    mock_voice.assert_awaited_once_with(DEFAULT_WUID, "msg-0")
-    mock_video.assert_awaited_once_with(DEFAULT_WUID, "msg-1")
-    mock_image.assert_awaited_once_with(DEFAULT_WUID, "msg-2")
+    # The media-fetch helpers now take the coordinator as a parameter (ADR 0004: no per-instance
+    # `self.coordinator` state, so concurrent read_message calls for different accounts can't cross).
+    mock_voice.assert_awaited_once_with(coordinator_with_data, DEFAULT_WUID, "msg-0")
+    mock_video.assert_awaited_once_with(coordinator_with_data, DEFAULT_WUID, "msg-1")
+    mock_image.assert_awaited_once_with(coordinator_with_data, DEFAULT_WUID, "msg-2")
 
 
 async def test_existing_watch_entry_in_old_state_gets_updated_with_new_messages(
@@ -128,13 +130,12 @@ async def test_watch_not_already_in_old_state_still_gets_an_entry_via_message_da
 async def test_fetch_chat_image_skips_remote_when_cached(hass: HomeAssistant, coordinator_with_data: XploraDataUpdateCoordinator) -> None:
     """A cached attachment must NOT trigger a fresh (rate-limited) remote download."""
     read_service = XploraMessageSensorUpdateService(hass, coordinator_with_data._entry.entry_id)
-    read_service.coordinator = coordinator_with_data
 
     with (
         patch("custom_components.xplora_watch.services.chat_media_cached", return_value=True),
         patch.object(coordinator_with_data.controller, "get_chat_image", new=AsyncMock()) as mock_get,
     ):
-        await read_service._fetch_chat_image(DEFAULT_WUID, "msg-cached")
+        await read_service._fetch_chat_image(coordinator_with_data, DEFAULT_WUID, "msg-cached")
 
     mock_get.assert_not_awaited()
 
@@ -142,14 +143,13 @@ async def test_fetch_chat_image_skips_remote_when_cached(hass: HomeAssistant, co
 async def test_fetch_chat_image_downloads_when_not_cached(hass: HomeAssistant, coordinator_with_data: XploraDataUpdateCoordinator) -> None:
     """A cache miss still fetches from the watch and writes the file."""
     read_service = XploraMessageSensorUpdateService(hass, coordinator_with_data._entry.entry_id)
-    read_service.coordinator = coordinator_with_data
 
     with (
         patch("custom_components.xplora_watch.services.chat_media_cached", return_value=False),
         patch.object(coordinator_with_data.controller, "get_chat_image", new=AsyncMock(return_value="base64==")) as mock_get,
         patch("custom_components.xplora_watch.services.encoded_base64_string_to_file") as mock_write,
     ):
-        await read_service._fetch_chat_image(DEFAULT_WUID, "msg-new")
+        await read_service._fetch_chat_image(coordinator_with_data, DEFAULT_WUID, "msg-new")
 
     mock_get.assert_awaited_once_with(DEFAULT_WUID, "msg-new")
     mock_write.assert_called_once()
@@ -161,7 +161,6 @@ async def test_fetch_chat_short_video_skips_only_when_both_files_cached(
     """The video skip requires BOTH the video and its thumbnail to be cached; a missing thumb
     still re-fetches."""
     read_service = XploraMessageSensorUpdateService(hass, coordinator_with_data._entry.entry_id)
-    read_service.coordinator = coordinator_with_data
 
     # Video cached, thumbnail missing -> must NOT skip.
     def _only_video_cached(_hass, _name, file_type, file_dir) -> bool:
@@ -172,7 +171,7 @@ async def test_fetch_chat_short_video_skips_only_when_both_files_cached(
         patch.object(coordinator_with_data.controller, "get_short_video", new=AsyncMock(return_value=None)) as mock_video,
         patch.object(coordinator_with_data.controller, "get_short_video_cover", new=AsyncMock(return_value=None)) as mock_cover,
     ):
-        await read_service._fetch_chat_short_video(DEFAULT_WUID, "msg-partial")
+        await read_service._fetch_chat_short_video(coordinator_with_data, DEFAULT_WUID, "msg-partial")
 
     mock_video.assert_awaited_once()
     mock_cover.assert_awaited_once()

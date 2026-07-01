@@ -66,7 +66,7 @@ from .const import (
     URL_MAPBOX,
     URL_OPENSTREETMAP,
 )
-from .demo import make_controller
+from .demo import is_demo_account, make_controller
 from .geocoder import OpenCageGeocodeUA
 from .log import Log
 from .pyxplora_api.const import ALL_WATCH_FUNCTIONS, DEFAULT_TIMEOUT, WatchFunction
@@ -1094,6 +1094,13 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
         """
         lat, lng = self.lat, self.lng
         if not (lat and lng):
+            return
+        # Demo mode must be fully network-free (demo.py): synthesize the address from the watch's own
+        # POI/coordinates instead of issuing a third-party reverse-geocode request, which would
+        # otherwise fail an offline demo setup (the demo controller can't intercept this call).
+        if is_demo_account(self._entry.data.get(CONF_EMAIL)):
+            self.location_name = self.poi or f"{lat:.4f}, {lng:.4f}"
+            self.licence = "Xplora® demo data (no reverse geocoding)"
             return
         cached = self._geocode_cache.get(wuid)
         if cached and cached[0] == lat and cached[1] == lng:

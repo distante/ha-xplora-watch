@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.xplora_watch.const import ATTR_SERVICE_DELETE_MSG, DOMAIN
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
@@ -37,16 +39,19 @@ async def test_empty_message_id_after_strip_logs_warning_and_skips_delete(
     assert "You must provide an ID" in caplog.text
 
 
-async def test_delete_failure_logs_error_but_does_not_raise(
+async def test_delete_failure_logs_error_and_raises_watch_offline(
     hass: HomeAssistant,
     coordinator: XploraDataUpdateCoordinator,
     graphql_operations,
     caplog,
 ) -> None:
+    # A refused delete (the only target) achieves nothing, so it surfaces the homogeneous
+    # `watch_offline` error toast in addition to the per-watch error log (ADR 0004).
     graphql_operations["DeleteChatMessage"] = {"data": {"deleteMsg": False}}
     devices = await setup_service_target(hass, coordinator)
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.ERROR), pytest.raises(ServiceValidationError) as err:
         await _delete(hass, devices[DEFAULT_WUID], "msg-1")
 
+    assert err.value.translation_key == "watch_offline"
     assert "Message cannot deleted" in caplog.text

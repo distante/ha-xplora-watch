@@ -60,12 +60,15 @@ async def test_reboot_auth_error_logs_clean_after_bounded_recovery(
     # returning E000004, so recovery is ultimately exhausted: the service must log a clean warning
     # and return, NOT propagate a raw traceback. (The old "services never re-login" stance was
     # superseded by centralization -- the single-flight gate makes the re-login storm-safe.)
+    # Since nothing succeeded, the service now surfaces an error toast rather than returning silently
+    # (best-effort fan-out, ADR 0004); the clean per-type warning is still logged (no raw traceback).
     graphql_operations["reboot"] = {"errors": [{"code": "E000004"}], "data": {"reboot": None}}
     devices = await setup_service_target(hass, coordinator)
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(logging.DEBUG), pytest.raises(ServiceValidationError) as err:
         await hass.services.async_call(DOMAIN, ATTR_SERVICE_REBOOT, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
+    assert err.value.translation_key == "nothing_actioned"
     assert "session token expired" in caplog.text
     assert "Reboot failed" not in caplog.text
     assert "Reboot result" not in caplog.text  # AuthError raised before the result is logged
