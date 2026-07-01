@@ -126,38 +126,83 @@ function entityStatusHtml(hass, entityId, esc) {
   return `<div>Waiting for ${code}…</div>`;
 }
 
-// De-duplicate the on-demand refreshes triggered when cards render. A single dashboard view can
-// hold several cards bound to the same watch (overview + alarm list + chat); without this each
-// would fire its own service call on render. NOTE: the integration's coordinator is the
-// authoritative dedup -- concurrent fetches with the same signature are coalesced server-side onto
-// one network fan-out (see `_inflight_updates`), so this guard is a UX nicety that avoids even
-// issuing the redundant websocket calls; correctness no longer depends on it. Keyed by an
-// arbitrary caller-supplied string, a call is suppressed if an identical key fired within the TTL.
-// `fireDeduped` returns true when it actually fired (caller can reflect that in the UI), false when
-// suppressed.
+// De-duplicate the on-demand refreshes triggered when cards render, and expose each run as a shared
+// awaitable so a co-rendered card can drive a loading state off the *real* refresh lifecycle. A
+// single dashboard view can hold several cards bound to the same watch (overview + alarm list +
+// chat); without this each would fire its own service call on render. NOTE: the integration's
+// coordinator is the authoritative dedup -- concurrent fetches with the same signature are coalesced
+// server-side onto one network fan-out (see `_inflight_updates`), so this guard is a UX nicety that
+// avoids even issuing the redundant websocket calls; correctness no longer depends on it.
+//
+// `_refreshDedup` records the last time each key fired (or was marked) for TTL suppression;
+// `_inflightRuns` holds the live shared promise while a run is actually in flight.
 const _refreshDedup = new Map();
-const REFRESH_DEDUP_TTL_MS = 15000;
-// Safety net for `_refresh`: if a `read_message` service call never settles (e.g. a dropped
-// websocket reply), re-enable the refresh button after this long so it can't stay wedged forever.
-const REFRESH_WATCHDOG_MS = 30000;
-// Keep the refresh spinner visible for at least this long. A cached/demo read can return in a few
-// ms -- without a floor the spinner flashes too briefly to be seen, so the click gives no feedback.
-const MIN_REFRESH_SPIN_MS = 500;
+const _inflightRuns = new Map();
+export const REFRESH_DEDUP_TTL_MS = 15000;
+// Safety net: if a refresh service call never settles (e.g. a dropped websocket reply), force the
+// run's shared promise to resolve after this long so downstream loading state can't wedge forever.
+export const REFRESH_WATCHDOG_MS = 30000;
+// Keep a refresh spinner visible for at least this long. A cached/demo read can return in a few ms
+// -- without a floor the spinner flashes too briefly to be seen, so the refresh gives no feedback.
+export const MIN_REFRESH_SPIN_MS = 500;
 
-function fireDeduped(key, fn) {
+// Start (or join) a deduped refresh for `key`, running `fn` at most once per TTL window. Returns a
+// handle `{ promise, inflight }`:
+//   - Concurrent callers for the same key share ONE run: the first fires `fn`, later callers get the
+//     same live `promise` with `inflight: true` and do not re-fire.
+//   - A caller arriving after the run settled but still within the TTL gets `inflight: false` (with
+//     an already-resolved `promise`) -- nothing is live to await, so downstream shows no loading.
+// The shared `promise` never rejects (a failed run is swallowed + logged, matching the old
+// fire-and-forget behaviour) and settles no sooner than MIN_REFRESH_SPIN_MS and no later than
+// REFRESH_WATCHDOG_MS after the run starts -- so an instant read still shows feedback and a
+// never-settling one can't wedge a caller's loading state.
+export function trackInflight(key, fn) {
+  // A run is already live for this key: share it, don't re-fire.
+  const active = _inflightRuns.get(key);
+  if (active !== undefined) return { promise: active, inflight: true };
+
+  // Fired (or explicitly marked) recently: suppress -- nothing live to await.
   const now = Date.now();
   const last = _refreshDedup.get(key);
-  if (last !== undefined && now - last < REFRESH_DEDUP_TTL_MS) return false;
+  if (last !== undefined && now - last < REFRESH_DEDUP_TTL_MS) {
+    return { promise: Promise.resolve(), inflight: false };
+  }
+
+  // Fresh run: record the window, fire `fn` (deferred so it can't throw into the caller), and wrap
+  // it with the min-floor + watchdog into one shared, non-rejecting promise.
   _refreshDedup.set(key, now);
-  Promise.resolve()
+  const work = Promise.resolve()
     .then(fn)
-    .catch((err) => console.error(`xplora-watch-card: deduped refresh "${key}" failed`, err));
-  return true;
+    .catch((err) => console.error(`xplora-watch-card: tracked refresh "${key}" failed`, err));
+
+  const promise = new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      _inflightRuns.delete(key);
+      resolve();
+    };
+    const watchdog = setTimeout(finish, REFRESH_WATCHDOG_MS);
+    work.then(() => {
+      // Hold the shared promise for a perceptible minimum so an instant (cached) run still shows
+      // feedback, then settle -- clearing the watchdog we no longer need.
+      const remaining = MIN_REFRESH_SPIN_MS - (Date.now() - now);
+      const settle = () => {
+        clearTimeout(watchdog);
+        finish();
+      };
+      if (remaining > 0) setTimeout(settle, remaining);
+      else settle();
+    });
+  });
+  _inflightRuns.set(key, promise);
+  return { promise, inflight: true };
 }
 
 // Record that a refresh for `key` just happened (without firing), so a follow-up auto-refresh for
 // the same watch/data set is suppressed by the dedup window. Used after an explicit user action.
-function markRefreshed(key) {
+export function markRefreshed(key) {
   _refreshDedup.set(key, Date.now());
 }
 
@@ -404,7 +449,7 @@ class XploraWatchCard extends HTMLElement {
     if (!this._isReady()) return; // bound entity not alive yet -- try again on the next hass push
     this._autoRefreshDone = true;
     if (!refreshOnRenderEnabled(this._stateObj())) return;
-    fireDeduped(this._refreshKey(), () =>
+    trackInflight(this._refreshKey(), () =>
       this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, this._base(), undefined, false)
     );
   }
@@ -1916,14 +1961,14 @@ class XploraWatchOverviewCard extends HTMLElement {
     if (listEntity) {
       const a = (this._hass.states[listEntity] || {}).attributes || {};
       if (a.wuid && a.entry_id) {
-        fireDeduped(`${SERVICE.REFRESH_FUNCTIONS}|${a.entry_id}|${a.wuid}`, () =>
+        trackInflight(`${SERVICE.REFRESH_FUNCTIONS}|${a.entry_id}|${a.wuid}`, () =>
           this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, { entity_id: [listEntity] }, undefined, false)
         );
       }
     }
     const updateBtn = this._buttonEntities().find((id) => id.endsWith("_update"));
     if (updateBtn) {
-      fireDeduped(`button.press|${updateBtn}`, () => this._hass.callService("button", "press", { entity_id: updateBtn }));
+      trackInflight(`button.press|${updateBtn}`, () => this._hass.callService("button", "press", { entity_id: updateBtn }));
     }
   }
 
@@ -3039,7 +3084,7 @@ class XploraWatchChatCard extends HTMLElement {
     if (this._messages().length === 0) {
       this._refresh();
     } else if (refreshOnRenderEnabled(this._stateObj())) {
-      fireDeduped(`${CHAT_SERVICE.READ}|${a.entry_id}|${a.wuid}`, () => this._refresh());
+      trackInflight(`${CHAT_SERVICE.READ}|${a.entry_id}|${a.wuid}`, () => this._refresh());
     }
   }
 

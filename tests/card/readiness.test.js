@@ -48,8 +48,9 @@ function mount(hass) {
 }
 
 const q = (el, sel) => el.shadowRoot.querySelector(sel);
-// The auto-refresh path fires through `fireDeduped`, which defers the call to a microtask; flush it
-// before asserting. (The explicit-button path calls `callService` synchronously, so it needs no tick.)
+// The auto-refresh path fires through `trackInflight`, which defers the call to a microtask; flush
+// it before asserting. (The explicit-button path calls `callService` synchronously, so it needs no
+// tick.)
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 afterEach(() => {
