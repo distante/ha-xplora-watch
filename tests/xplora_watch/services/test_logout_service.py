@@ -1,4 +1,4 @@
-"""Tests for XploraLogoutService.async_logout (manual server-side logout service)."""
+"""Tests for the ``logout`` service: device target -> config entry (account) -> server logout."""
 
 from __future__ import annotations
 
@@ -10,19 +10,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import aiohttp_client
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.xplora_watch.const import DOMAIN
+from custom_components.xplora_watch.const import ATTR_SERVICE_LOGOUT, DOMAIN
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
 from custom_components.xplora_watch.pyxplora_api.const import ENDPOINT
-from custom_components.xplora_watch.services import XploraLogoutService
+from tests.xplora_watch.fixtures.graphql_payloads import DEFAULT_WUID
 
-from ..conftest import _make_graphql_callback
+from ..conftest import _make_graphql_callback, setup_service_target
 from ..fixtures.graphql_payloads import DEFAULT_OPERATION_PAYLOADS
-
-
-def _register_coordinator(hass: HomeAssistant, coordinator: XploraDataUpdateCoordinator) -> str:
-    entry_id = coordinator._entry.entry_id
-    hass.data.setdefault(DOMAIN, {})[entry_id] = coordinator
-    return entry_id
 
 
 def _operations() -> dict[str, dict[str, Any]]:
@@ -31,11 +25,10 @@ def _operations() -> dict[str, dict[str, Any]]:
 
 async def test_logout_success_logs_result_and_disconnects(hass: HomeAssistant, coordinator: XploraDataUpdateCoordinator, caplog) -> None:
     assert coordinator.controller._isConnected() is True
-    entry_id = _register_coordinator(hass, coordinator)
-    logout_service = XploraLogoutService(hass, entry_id)
+    devices = await setup_service_target(hass, coordinator)
 
     with caplog.at_level(logging.DEBUG):
-        await logout_service.async_logout(kwargs={"user": [f"{entry_id} (testuser)"]})
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_LOGOUT, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
     assert "Logout result" in caplog.text
     assert "could not reach" not in caplog.text
@@ -50,11 +43,10 @@ async def test_logout_tolerates_e000004_as_success(
     # It must NOT be raised as AuthError (it routes through the raw query, not the authorized
     # one) and must NOT be reported as a transient failure.
     graphql_operations["ExpireToken"] = {"errors": [{"code": "E000004"}], "data": {"expireToken": None}}
-    entry_id = _register_coordinator(hass, coordinator)
-    logout_service = XploraLogoutService(hass, entry_id)
+    devices = await setup_service_target(hass, coordinator)
 
     with caplog.at_level(logging.DEBUG):
-        await logout_service.async_logout(kwargs={"user": [f"{entry_id} (testuser)"]})
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_LOGOUT, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
     assert "could not reach" not in caplog.text
     assert coordinator.controller._isConnected() is False
@@ -79,11 +71,10 @@ async def test_logout_transient_error_logs_warning_and_clears_session(
         coord = XploraDataUpdateCoordinator(hass, mock_config_entry_phone)
         session = aiohttp_client.async_get_clientsession(hass)
         await coord.init(session=session)
-        entry_id = _register_coordinator(hass, coord)
-        logout_service = XploraLogoutService(hass, entry_id)
+        devices = await setup_service_target(hass, coord)
 
         with caplog.at_level(logging.WARNING):
-            await logout_service.async_logout(kwargs={"user": [f"{entry_id} (testuser)"]})
+            await hass.services.async_call(DOMAIN, ATTR_SERVICE_LOGOUT, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
     assert "could not reach the Xplora server" in caplog.text
     # `logout()`'s finally block clears local state even when the server call raised.

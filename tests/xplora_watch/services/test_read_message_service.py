@@ -1,22 +1,23 @@
-"""Tests for XploraMessageSensorUpdateService.async_read_message."""
+"""Tests for the ``read_message`` service, via device targeting.
+
+The attachment-fetch helpers (`_fetch_chat_*`) are unit-tested directly on the service instance;
+the dispatch + state-merge behavior is driven end-to-end through `hass.services.async_call`.
+"""
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 
-from custom_components.xplora_watch.const import DOMAIN, SENSOR_MESSAGE
+from custom_components.xplora_watch.const import ATTR_SERVICE_READ_MSG, DOMAIN, SENSOR_MESSAGE
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
 from custom_components.xplora_watch.services import XploraMessageSensorUpdateService
 from tests.xplora_watch.fixtures.graphql_payloads import DEFAULT_USER_ID, DEFAULT_WUID
 
-
-def _register_coordinator(hass: HomeAssistant, coordinator: XploraDataUpdateCoordinator) -> str:
-    entry_id = coordinator._entry.entry_id
-    hass.data.setdefault(DOMAIN, {})[entry_id] = coordinator
-    return entry_id
+from ..conftest import setup_service_target
 
 
 def _make_raw_chat(msg_id: str, chat_type: str) -> dict:
@@ -61,15 +62,14 @@ async def test_dispatches_voice_short_video_and_image_handlers_once_each(
     hass: HomeAssistant, coordinator_with_data: XploraDataUpdateCoordinator, graphql_operations
 ) -> None:
     _set_chats_fixture(graphql_operations, ["VOICE", "SHORT_VIDEO", "IMAGE"])
-    entry_id = _register_coordinator(hass, coordinator_with_data)
-    read_service = XploraMessageSensorUpdateService(hass, entry_id)
+    devices = await setup_service_target(hass, coordinator_with_data)
 
     with (
         patch.object(XploraMessageSensorUpdateService, "_fetch_chat_voice", new=AsyncMock()) as mock_voice,
         patch.object(XploraMessageSensorUpdateService, "_fetch_chat_short_video", new=AsyncMock()) as mock_video,
         patch.object(XploraMessageSensorUpdateService, "_fetch_chat_image", new=AsyncMock()) as mock_image,
     ):
-        await read_service.async_read_message([DEFAULT_WUID], kwargs={"user": [f"{entry_id} (testuser)"]})
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_READ_MSG, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
     mock_voice.assert_awaited_once_with(DEFAULT_WUID, "msg-0")
     mock_video.assert_awaited_once_with(DEFAULT_WUID, "msg-1")
@@ -80,8 +80,7 @@ async def test_existing_watch_entry_in_old_state_gets_updated_with_new_messages(
     hass: HomeAssistant, coordinator_with_data: XploraDataUpdateCoordinator, graphql_operations
 ) -> None:
     _set_chats_fixture(graphql_operations, ["VOICE"])
-    entry_id = _register_coordinator(hass, coordinator_with_data)
-    read_service = XploraMessageSensorUpdateService(hass, entry_id)
+    devices = await setup_service_target(hass, coordinator_with_data)
 
     # coordinator_with_data already populated coordinator.data[DEFAULT_WUID] via a full refresh.
     assert DEFAULT_WUID in coordinator_with_data.data
@@ -91,7 +90,7 @@ async def test_existing_watch_entry_in_old_state_gets_updated_with_new_messages(
         patch.object(XploraMessageSensorUpdateService, "_fetch_chat_short_video", new=AsyncMock()),
         patch.object(XploraMessageSensorUpdateService, "_fetch_chat_image", new=AsyncMock()),
     ):
-        await read_service.async_read_message([DEFAULT_WUID], kwargs={"user": [f"{entry_id} (testuser)"]})
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_READ_MSG, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
     updated_messages = coordinator_with_data.data[DEFAULT_WUID][SENSOR_MESSAGE]
     assert updated_messages["list"][0]["msgId"] == "msg-0"
@@ -102,15 +101,16 @@ async def test_watch_not_already_in_old_state_still_gets_an_entry_via_message_da
 ) -> None:
     """coordinator.message_data() unconditionally does self.data = watch_entry (see coordinator.py),
 
-    so a previously-unseen watch DOES end up in coordinator.data after async_read_message --
+    so a previously-unseen watch DOES end up in coordinator.data after read_message --
     the `if new_data_msg:` guard inside services.py only governs whether *that* function's own
     old_state.update() call additionally merges in SENSOR_MESSAGE on top of an existing entry;
     it cannot prevent the entry from being created in the first place.
     """
     other_watch = "watch-id-002"
     _set_chats_fixture(graphql_operations, ["VOICE"])
-    entry_id = _register_coordinator(hass, coordinator_with_data)
-    read_service = XploraMessageSensorUpdateService(hass, entry_id)
+    # The account links a second watch (so its device resolves).
+    coordinator_with_data.controller.getWatchUserIDs = lambda: [DEFAULT_WUID, other_watch]  # type: ignore[method-assign]
+    devices = await setup_service_target(hass, coordinator_with_data, wuids=(other_watch,))
 
     assert other_watch not in coordinator_with_data.data
 
@@ -119,7 +119,7 @@ async def test_watch_not_already_in_old_state_still_gets_an_entry_via_message_da
         patch.object(XploraMessageSensorUpdateService, "_fetch_chat_short_video", new=AsyncMock()),
         patch.object(XploraMessageSensorUpdateService, "_fetch_chat_image", new=AsyncMock()),
     ):
-        await read_service.async_read_message([other_watch], kwargs={"user": [f"{entry_id} (testuser)"]})
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_READ_MSG, {"device_id": [devices[other_watch]]}, blocking=True)
 
     assert other_watch in coordinator_with_data.data
     assert coordinator_with_data.data[other_watch][SENSOR_MESSAGE]["list"][0]["msgId"] == "msg-0"
@@ -127,8 +127,7 @@ async def test_watch_not_already_in_old_state_still_gets_an_entry_via_message_da
 
 async def test_fetch_chat_image_skips_remote_when_cached(hass: HomeAssistant, coordinator_with_data: XploraDataUpdateCoordinator) -> None:
     """A cached attachment must NOT trigger a fresh (rate-limited) remote download."""
-    entry_id = _register_coordinator(hass, coordinator_with_data)
-    read_service = XploraMessageSensorUpdateService(hass, entry_id)
+    read_service = XploraMessageSensorUpdateService(hass, coordinator_with_data._entry.entry_id)
     read_service.coordinator = coordinator_with_data
 
     with (
@@ -142,8 +141,7 @@ async def test_fetch_chat_image_skips_remote_when_cached(hass: HomeAssistant, co
 
 async def test_fetch_chat_image_downloads_when_not_cached(hass: HomeAssistant, coordinator_with_data: XploraDataUpdateCoordinator) -> None:
     """A cache miss still fetches from the watch and writes the file."""
-    entry_id = _register_coordinator(hass, coordinator_with_data)
-    read_service = XploraMessageSensorUpdateService(hass, entry_id)
+    read_service = XploraMessageSensorUpdateService(hass, coordinator_with_data._entry.entry_id)
     read_service.coordinator = coordinator_with_data
 
     with (
@@ -162,8 +160,7 @@ async def test_fetch_chat_short_video_skips_only_when_both_files_cached(
 ) -> None:
     """The video skip requires BOTH the video and its thumbnail to be cached; a missing thumb
     still re-fetches."""
-    entry_id = _register_coordinator(hass, coordinator_with_data)
-    read_service = XploraMessageSensorUpdateService(hass, entry_id)
+    read_service = XploraMessageSensorUpdateService(hass, coordinator_with_data._entry.entry_id)
     read_service.coordinator = coordinator_with_data
 
     # Video cached, thumbnail missing -> must NOT skip.
@@ -181,13 +178,8 @@ async def test_fetch_chat_short_video_skips_only_when_both_files_cached(
     mock_cover.assert_awaited_once()
 
 
-async def test_non_list_targets_logs_warning_and_returns_early(
-    hass: HomeAssistant, coordinator_with_data: XploraDataUpdateCoordinator, caplog
-) -> None:
-    entry_id = _register_coordinator(hass, coordinator_with_data)
-    read_service = XploraMessageSensorUpdateService(hass, entry_id)
+async def test_no_device_target_raises(hass: HomeAssistant, coordinator_with_data: XploraDataUpdateCoordinator) -> None:
+    await setup_service_target(hass, coordinator_with_data)
 
-    with caplog.at_level(logging.WARNING):
-        await read_service.async_read_message(None, kwargs={"user": [f"{entry_id} (testuser)"]})
-
-    assert "No watch id or type" in caplog.text
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_READ_MSG, {"device_id": []}, blocking=True)

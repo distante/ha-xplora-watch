@@ -18,10 +18,7 @@ from custom_components.xplora_watch.const import DOMAIN
 
 
 def _patch_fs_helpers():
-    return (
-        patch("custom_components.xplora_watch.create_www_directory", new=AsyncMock()),
-        patch("custom_components.xplora_watch.create_service_yaml_file", new=AsyncMock()),
-    )
+    return patch("custom_components.xplora_watch.create_www_directory", new=AsyncMock())
 
 
 async def test_full_setup_creates_entities_for_every_platform(
@@ -31,8 +28,7 @@ async def test_full_setup_creates_entities_for_every_platform(
     mock_geocoding_openstreetmap,
     mock_entity_picture,
 ) -> None:
-    patch_www, patch_yaml = _patch_fs_helpers()
-    with patch_www, patch_yaml:
+    with _patch_fs_helpers():
         result = await hass.config_entries.async_setup(mock_config_entry_phone.entry_id)
         await hass.async_block_till_done()
 
@@ -81,13 +77,12 @@ async def test_full_setup_migrates_a_pre_token_entity_in_place(
     assert old.entity_id == "sensor.xplora_kid_one_watch_battery"
     original_registry_id = old.id
 
-    patch_www, patch_yaml = _patch_fs_helpers()
     # Isolate the slug migration from the unrelated unique_id migration: with the dashed test
     # fixture ids (`user-id-001`), `_async_migrate_entries` would re-append the account id to the
     # pre-seeded unique_id (real Xplora ids are dash-free, so it is a no-op in production). Patching
     # it to a no-op reproduces that production no-op and keeps this test focused on the slug rename.
     patch_uid = patch("custom_components.xplora_watch._async_migrate_entries", new=AsyncMock(return_value=True))
-    with patch_uid, patch_www, patch_yaml:
+    with patch_uid, _patch_fs_helpers():
         await hass.config_entries.async_setup(mock_config_entry_phone.entry_id)
         await hass.async_block_till_done()
 
@@ -107,8 +102,7 @@ async def test_full_setup_then_unload_removes_coordinator(
     mock_geocoding_openstreetmap,
     mock_entity_picture,
 ) -> None:
-    patch_www, patch_yaml = _patch_fs_helpers()
-    with patch_www, patch_yaml:
+    with _patch_fs_helpers():
         await hass.config_entries.async_setup(mock_config_entry_phone.entry_id)
         await hass.async_block_till_done()
 

@@ -55,6 +55,46 @@ This repository uses [Ruff](https://docs.astral.sh/ruff/) for formatting and lin
 
 - The linter enforces import sorting and common correctness/style rules.
 
+### Services: always target the watch with a filtered `device_id` field
+
+Every `xplora_watch` service is aimed at a **watch device**, and the watch must be chosen *directly*
+in the action form — never via Home Assistant's generic top-level `target:` picker (which renders an
+"Add target" control that accepts any device/area/entity). When you add or change a service:
+
+1. In [`services.yaml`](custom_components/xplora_watch/services.yaml), give it an inline `device_id`
+   **field** whose `device` selector is filtered to this integration — and **no** top-level
+   `target:` block:
+
+   ```yaml
+   my_service:
+     name: My Service
+     fields:
+       device_id:
+         name: Watch(es)
+         description: The Xplora® watch(es) this action applies to.
+         required: true
+         selector:
+           device:
+             integration: xplora_watch
+             multiple: true
+       # ...any other fields...
+   ```
+
+   This shows a watch-only chooser in the UI, so the user picks the watch directly and cannot select
+   an unrelated device/area.
+
+2. Register the service in [`services.py`](custom_components/xplora_watch/services.py) with a schema
+   built from `_target_schema(...)` (keep `device_id` **optional** in the schema — the bundled
+   Lovelace card targets watches programmatically by `entity_id`). The handler resolves the call's
+   `device_id` / `entity_id` / `area_id` to each `(account, watch)` via `XploraService._accounts`;
+   reuse it instead of reading targets by hand. Gate control actions through `_guardian_targets`.
+
+3. Keep `services.yaml` a **static, account-data-free** file. It is committed as-is and never
+   regenerated at runtime, so it must never contain real watch ids or account names.
+
+`tests/xplora_watch/helper/test_service_yaml.py` enforces this — it fails if any registered service
+lacks the integration-filtered `device_id` field or reintroduces a `user`/`target`/`all` selector.
+
 ## Development Environment
 
 This integration comes with a devcontainer, easy to use with Visual Studio Code. See this

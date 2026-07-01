@@ -1,15 +1,28 @@
-"""Support for Xplora® Watch Version 2 send/read message, manually refresh and shutdown."""
+"""Support for Xplora® Watch Version 2 send/read message, manually refresh and shutdown.
+
+Services are targeted at Home Assistant **devices** (ADR 0003). Each account's copy of a watch
+is its own HA device (named ``"<Ward> Watch (<account token>)"``, ADR 0002), so a single device
+pick identifies both the account (config entry / coordinator) and the watch (``wuid``) -- replacing
+the old bespoke ``user`` + ``target`` selectors and the magic ``all`` string. The handler resolves
+each selected device (or every Xplora device in a targeted area) back to its ``(account, wuid)``;
+account-level services (``logout``) act on the config entry behind the device. Control actions stay
+gated to a watch's primary Guardian (ADR 0001) per resolved ``wuid``.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
+from homeassistant.const import ATTR_AREA_ID, ATTR_DEVICE_ID, ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .config import resolve
 from .const import (
@@ -38,14 +51,12 @@ from .const import (
     ATTR_SERVICE_SHUTDOWN,
     ATTR_SERVICE_SILENT_ID,
     ATTR_SERVICE_START,
-    ATTR_SERVICE_TARGET,
     ATTR_SERVICE_TURN_ALL_ALARMS_OFF,
     ATTR_SERVICE_TURN_ALL_ALARMS_ON,
     ATTR_SERVICE_TURN_ALL_SILENTS_OFF,
     ATTR_SERVICE_TURN_ALL_SILENTS_ON,
     ATTR_SERVICE_UPDATE_ALARM,
     ATTR_SERVICE_UPDATE_SILENT,
-    ATTR_SERVICE_USER,
     ATTR_SERVICE_WEEKDAYS,
     ATTR_SILENT,
     DOMAIN,
@@ -64,171 +75,158 @@ from .pyxplora_api.exception_classes import AuthError, RateLimitError
 from .pyxplora_api.exception_classes import ConnectionError as XploraConnectionError
 from .pyxplora_api.pyxplora_api_async import FetchError
 
-BASE_SHUTDOWN_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-BASE_REBOOT_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-# Account-level: logout has no per-watch `target`, only `user` (which encodes the entry id).
-# `helper.set_watches` populates the `user` selector and skips the missing `target` field.
-BASE_LOGOUT_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-BASE_DELETE_MESSAGE_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_MSGID): cv.string,
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-BASE_READ_MESSAGE_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-BASE_SEND_MESSAGE_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_MSG): cv.string,
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-BASE_SEE_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
+
+def _target_schema(extra: dict[Any, Any] | None = None) -> vol.Schema:
+    """Schema for a device-targeted service: HA ``device_id`` / ``area_id`` / ``entity_id`` plus fields.
+
+    The watch is chosen in the UI via the ``device_id`` field (a ``device`` selector filtered to this
+    integration -- see ``services.yaml``). ``device_id`` is ``Optional`` here (not required) because
+    programmatic callers -- the bundled Lovelace card -- instead pass ``entity_id``, and an empty
+    resolution is rejected at runtime by ``XploraService._accounts`` with a friendly
+    ``ServiceValidationError`` rather than a schema error. ``area_id`` / ``entity_id`` are accepted
+    from YAML automations and the card; both resolve to the watch's device below.
+    """
+    fields: dict[Any, Any] = {
+        vol.Optional(ATTR_DEVICE_ID): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional(ATTR_AREA_ID): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional(ATTR_ENTITY_ID): vol.All(cv.ensure_list, [cv.string]),
+    }
+    if extra:
+        fields.update(extra)
+    return vol.Schema(fields, extra=vol.ALLOW_EXTRA)
+
+
+BASE_SHUTDOWN_SERVICE_SCHEMA = _target_schema()
+BASE_REBOOT_SERVICE_SCHEMA = _target_schema()
+BASE_LOGOUT_SERVICE_SCHEMA = _target_schema()
+BASE_DELETE_MESSAGE_SERVICE_SCHEMA = _target_schema({vol.Required(ATTR_SERVICE_MSGID): cv.string})
+BASE_READ_MESSAGE_SERVICE_SCHEMA = _target_schema()
+BASE_SEND_MESSAGE_SERVICE_SCHEMA = _target_schema({vol.Required(ATTR_SERVICE_MSG): cv.string})
+BASE_SEE_SERVICE_SCHEMA = _target_schema()
 # On-demand refresh of alarms/silent-times/safe-zones (the "functions" data that has its own,
-# default-off poll interval). Same target/user shape as `see`.
-BASE_REFRESH_FUNCTIONS_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
+# default-off poll interval).
+BASE_REFRESH_FUNCTIONS_SERVICE_SCHEMA = _target_schema()
 # Fetch + cache one past day's location track (default: yesterday). `date` is an optional
 # "YYYY-MM-DD" override; intended to be automated daily so HA archives days beyond the watch's window.
-BASE_FETCH_HISTORY_SERVICE_SCHEMA = vol.Schema(
+BASE_FETCH_HISTORY_SERVICE_SCHEMA = _target_schema({vol.Optional(ATTR_SERVICE_DATE): cv.string})
+# Alarm / silent-time CRUD. The device target(s) select the watch(es); `start`/`end` are "HH:MM"
+# strings and `weekdays` is a list of canonical day keys (see `WEEKDAY_KEYS`) -- both converted before
+# the call.
+BASE_CREATE_ALARM_SERVICE_SCHEMA = _target_schema(
     {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-        vol.Optional(ATTR_SERVICE_DATE): cv.string,
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-# Alarm / silent-time CRUD. `target` selects the watch(es); `start`/`end` are "HH:MM" strings and
-# `weekdays` is a list of canonical day keys (see `WEEKDAY_KEYS`) -- both converted before the call.
-BASE_CREATE_ALARM_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
         vol.Required(ATTR_SERVICE_START): cv.string,
         vol.Required(ATTR_SERVICE_WEEKDAYS): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional(ATTR_SERVICE_NAME, default=""): cv.string,
-    },
-    extra=vol.ALLOW_EXTRA,
+    }
 )
-BASE_UPDATE_ALARM_SERVICE_SCHEMA = vol.Schema(
+BASE_UPDATE_ALARM_SERVICE_SCHEMA = _target_schema(
     {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
         vol.Required(ATTR_SERVICE_ALARM_ID): cv.string,
         vol.Optional(ATTR_SERVICE_START): cv.string,
         vol.Optional(ATTR_SERVICE_WEEKDAYS): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional(ATTR_SERVICE_NAME): cv.string,
-    },
-    extra=vol.ALLOW_EXTRA,
+    }
 )
-BASE_DELETE_ALARM_SERVICE_SCHEMA = vol.Schema(
+BASE_DELETE_ALARM_SERVICE_SCHEMA = _target_schema({vol.Required(ATTR_SERVICE_ALARM_ID): cv.string})
+BASE_SET_ALARM_ENABLED_SERVICE_SCHEMA = _target_schema(
     {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_ALARM_ID): cv.string,
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-BASE_SET_ALARM_ENABLED_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
         vol.Required(ATTR_SERVICE_ALARM_ID): cv.string,
         vol.Required(ATTR_SERVICE_ENABLED): cv.boolean,
-    },
-    extra=vol.ALLOW_EXTRA,
+    }
 )
-BASE_CREATE_SILENT_SERVICE_SCHEMA = vol.Schema(
+BASE_CREATE_SILENT_SERVICE_SCHEMA = _target_schema(
     {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
         vol.Required(ATTR_SERVICE_START): cv.string,
         vol.Required(ATTR_SERVICE_END): cv.string,
         vol.Required(ATTR_SERVICE_WEEKDAYS): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
+    }
 )
-BASE_UPDATE_SILENT_SERVICE_SCHEMA = vol.Schema(
+BASE_UPDATE_SILENT_SERVICE_SCHEMA = _target_schema(
     {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
         vol.Required(ATTR_SERVICE_SILENT_ID): cv.string,
         vol.Optional(ATTR_SERVICE_START): cv.string,
         vol.Optional(ATTR_SERVICE_END): cv.string,
         vol.Optional(ATTR_SERVICE_WEEKDAYS): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
+    }
 )
-BASE_DELETE_SILENT_SERVICE_SCHEMA = vol.Schema(
+BASE_DELETE_SILENT_SERVICE_SCHEMA = _target_schema({vol.Required(ATTR_SERVICE_SILENT_ID): cv.string})
+BASE_SET_SILENT_ENABLED_SERVICE_SCHEMA = _target_schema(
     {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_SILENT_ID): cv.string,
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-BASE_SET_SILENT_ENABLED_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
         vol.Required(ATTR_SERVICE_SILENT_ID): cv.string,
         vol.Required(ATTR_SERVICE_ENABLED): cv.boolean,
-    },
-    extra=vol.ALLOW_EXTRA,
+    }
 )
 # Bulk enable/disable. No per-entry id: the handler enumerates every alarm / silent-time window on
-# the target watch(es) itself, so only the watch + account selectors are required.
-BASE_TURN_ALL_ALARMS_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-BASE_TURN_ALL_SILENTS_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SERVICE_TARGET): vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_SERVICE_USER): vol.All(cv.ensure_list, [cv.string]),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
+# the target watch(es) itself, so only the device target is required.
+BASE_TURN_ALL_ALARMS_SERVICE_SCHEMA = _target_schema()
+BASE_TURN_ALL_SILENTS_SERVICE_SCHEMA = _target_schema()
+
+
+@dataclass(slots=True)
+class _AccountTargets:
+    """One account's slice of a service call: its coordinator/logger plus the watches targeted on it.
+
+    A single call may target devices belonging to several accounts (multi-select or an area); the
+    resolver groups them so each handler runs its existing per-account logic once per account.
+    """
+
+    entry_id: str
+    log: Log
+    coordinator: XploraDataUpdateCoordinator
+    wuids: list[str] = field(default_factory=list)
+
+
+def _xplora_device_ids(hass: HomeAssistant, data: dict[str, Any]) -> list[str]:
+    """Every device id referenced by a call's ``device_id`` / ``area_id`` / ``entity_id`` target.
+
+    Order-preserving: explicitly-picked ``device_id``s first, then the device behind each
+    ``entity_id``, then the Xplora devices in each ``area_id`` (devices whose identifiers carry our
+    ``DOMAIN``, so a non-Xplora device sharing the area is never dragged in). Duplicates are dropped.
+    ``entity_id`` is how the bundled Lovelace card targets a watch (it binds entities, not devices).
+    """
+    registry = dr.async_get(hass)
+    entities = er.async_get(hass)
+    device_ids: list[str] = []
+
+    def _add(device_id: str) -> None:
+        if device_id not in device_ids:
+            device_ids.append(device_id)
+
+    for device_id in cv.ensure_list(data.get(ATTR_DEVICE_ID, [])):
+        _add(device_id)
+    for entity_id in cv.ensure_list(data.get(ATTR_ENTITY_ID, [])):
+        entry = entities.async_get(entity_id)
+        if entry and entry.device_id:
+            _add(entry.device_id)
+    for area_id in cv.ensure_list(data.get(ATTR_AREA_ID, [])):
+        for device in dr.async_entries_for_area(registry, area_id):
+            if any(domain == DOMAIN for domain, _ in device.identifiers):
+                _add(device.id)
+    return device_ids
+
+
+def _resolve_device(hass: HomeAssistant, device_id: str) -> tuple[str, XploraDataUpdateCoordinator, str] | None:
+    """Resolve one HA device id to ``(entry_id, coordinator, wuid)``; ``None`` if it isn't an Xplora watch.
+
+    A device's ``config_entries`` give the candidate accounts; the matching coordinator is the one
+    registered in ``hass.data[DOMAIN]``. The ``wuid`` is recovered from the device's
+    ``(DOMAIN, "{entry.unique_id}_{wuid}")`` identifier by matching it against the coordinator's known
+    wuids (ADR 0003) -- not a naive ``rsplit("_")``, since the account's ``unique_id`` (an email /
+    phone number) may itself contain separators.
+    """
+    registry = dr.async_get(hass)
+    device = registry.async_get(device_id)
+    if device is None:
+        return None
+    for entry_id in device.config_entries:
+        coordinator: XploraDataUpdateCoordinator | None = hass.data.get(DOMAIN, {}).get(entry_id)
+        if coordinator is None or getattr(coordinator, "controller", None) is None:
+            continue
+        prefix = coordinator._entry.unique_id
+        for wuid in coordinator.controller.getWatchUserIDs():
+            if (DOMAIN, f"{prefix}_{wuid}") in device.identifiers:
+                return entry_id, coordinator, wuid
+    return None
 
 
 def _log_api_error(action: str, entry_id: str, error: Exception) -> None:
@@ -274,44 +272,31 @@ async def async_setup_services(hass: HomeAssistant, entry_id: str) -> None:
     silent_service = XploraSilentService(hass, entry_id)
 
     async def async_see(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await see_service.async_see(kwargs.get(ATTR_SERVICE_TARGET, ["all"]), kwargs=kwargs)
+        await see_service.async_see(kwargs=dict(service.data))
 
     async def async_refresh_functions(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await refresh_functions_service.async_refresh_functions(kwargs.get(ATTR_SERVICE_TARGET, ["all"]), kwargs=kwargs)
+        await refresh_functions_service.async_refresh_functions(kwargs=dict(service.data))
 
     async def async_fetch_history(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await fetch_history_service.async_fetch_history(
-            kwargs.get(ATTR_SERVICE_TARGET, ["all"]), kwargs.get(ATTR_SERVICE_DATE), kwargs=kwargs
-        )
+        await fetch_history_service.async_fetch_history(kwargs=dict(service.data))
 
     async def async_delete_message_from_app(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await delete_message_from_app_service.async_delete_message_from_app(
-            kwargs[ATTR_SERVICE_MSGID], kwargs[ATTR_SERVICE_TARGET], kwargs=kwargs
-        )
+        await delete_message_from_app_service.async_delete_message_from_app(kwargs=dict(service.data))
 
     async def async_send_message(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await notify_service.async_send_message(kwargs[ATTR_SERVICE_MSG], kwargs[ATTR_SERVICE_TARGET], kwargs=kwargs)
+        await notify_service.async_send_message(kwargs=dict(service.data))
 
     async def async_read_message(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await sensor_update_service.async_read_message(kwargs[ATTR_SERVICE_TARGET], kwargs=kwargs)
+        await sensor_update_service.async_read_message(kwargs=dict(service.data))
 
     async def async_shutdown(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await shutdown_service.async_shutdown(kwargs[ATTR_SERVICE_TARGET], kwargs=kwargs)
+        await shutdown_service.async_shutdown(kwargs=dict(service.data))
 
     async def async_reboot(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await reboot_service.async_reboot(kwargs[ATTR_SERVICE_TARGET], kwargs=kwargs)
+        await reboot_service.async_reboot(kwargs=dict(service.data))
 
     async def async_logout(service: ServiceCall) -> None:
-        kwargs = dict(service.data)
-        await logout_service.async_logout(kwargs=kwargs)
+        await logout_service.async_logout(kwargs=dict(service.data))
 
     async def async_create_alarm(service: ServiceCall) -> None:
         await alarm_service.async_create(kwargs=dict(service.data))
@@ -461,37 +446,45 @@ class XploraService:
             _log_api_error(action, entry_id, error)
             guard.failed = True
 
-    def _resolve(self, data: dict[str, Any]) -> tuple[str, Log, XploraDataUpdateCoordinator]:
-        """Resolve the (entry_id, logger, coordinator) for a service call.
+    def _accounts(self, data: dict[str, Any]) -> list[_AccountTargets]:
+        """Resolve a call's device targets into per-account work units.
 
-        ``data`` is the raw ``service.data`` dict. Mirrors the integration's calling convention:
-        the target config entry id is the first token of the first ``user`` selector value
-        (``"<entry_id> (<username>)"``).
+        Groups every resolved ``(account, wuid)`` by account, preserving target order and de-duping
+        watches, so a multi-device or area selection fans out to each account once. Devices that
+        aren't Xplora watches (or whose account isn't loaded) are silently skipped. Raises
+        ``ServiceValidationError`` when the call resolves to no Xplora watch at all -- so a misfired
+        call surfaces a clean message instead of silently doing nothing.
         """
-        entry_id = str(data[ATTR_SERVICE_USER][0]).split(" ", maxsplit=1)[0]
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        return entry_id, Log(entry_id=entry_id), coordinator
-
-    @staticmethod
-    def _resolve_targets(coordinator: XploraDataUpdateCoordinator, targets: list[str]) -> list[str]:
-        """Expand the special ``all`` target to every watch user id on the account."""
-        if "all" in targets:
-            return list(coordinator.controller.getWatchUserIDs())
-        return targets
+        groups: dict[str, _AccountTargets] = {}
+        order: list[str] = []
+        for device_id in _xplora_device_ids(self._hass, data):
+            resolved = _resolve_device(self._hass, device_id)
+            if resolved is None:
+                continue
+            entry_id, coordinator, wuid = resolved
+            group = groups.get(entry_id)
+            if group is None:
+                group = _AccountTargets(entry_id, Log(entry_id=entry_id), coordinator)
+                groups[entry_id] = group
+                order.append(entry_id)
+            if wuid not in group.wuids:
+                group.wuids.append(wuid)
+        if not order:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_xplora_device")
+        return [groups[entry_id] for entry_id in order]
 
     def _guardian_targets(
         self,
         coordinator: XploraDataUpdateCoordinator,
-        targets: list[str],
+        wuids: list[str],
         action: str,
         log: Log,
     ) -> list[str]:
         """Restrict a Guardian-only service call to the watches this account actually guards.
 
-        Shared gate for the reboot, shutdown and alarm/silent-time CRUD handlers. Expands the special
-        ``all`` target, then drops every watch the account is only a *Contact* of and returns the rest.
-        Restricting these control actions to the watch's Guardian is a client policy (ref:XW-009), not
-        a server rejection.
+        Shared gate for the reboot, shutdown and alarm/silent-time CRUD handlers. Drops every watch
+        the account is only a *Contact* of and returns the rest. Restricting these control actions to
+        the watch's Guardian is a client policy (ref:XW-009), not a server rejection.
 
         Fails open: a watch is dropped only when its role is a *confirmed* Contact; an
         unknown/unresolved role is treated as a Guardian, so incomplete data never blocks a real
@@ -502,9 +495,8 @@ class XploraService:
         ``action`` is the short phrase shown to the user for what was blocked (e.g. ``"reboot the
         watch"``); it fills the error's ``{action}`` placeholder and the per-watch warning.
         """
-        resolved = self._resolve_targets(coordinator, targets)
         allowed: list[str] = []
-        for wuid in resolved:
+        for wuid in wuids:
             if coordinator.is_confirmed_contact(wuid):
                 log.warning(
                     "Skipping '%s' for watch %s: this account is a contact of it, not its primary guardian.",
@@ -543,36 +535,23 @@ class XploraService:
 class XploraSeeService(XploraService):
     """Create a service that can be update information from Watch."""
 
-    async def async_see(self, targets: list[str] | None = None, **kwargs: Any) -> None:
+    async def async_see(self, **kwargs: Any) -> None:
         """Update watch information."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        if isinstance(targets, list):
-            if "all" in targets:
-                targets = coordinator.controller.getWatchUserIDs()
-            log.debug("%s: update all information: %s", coordinator.controller.getUserName(), {", ".join(targets)})
-            await coordinator.async_update_xplora_data(targets)
-            # await self._coordinator.async_refresh()
-        else:
-            log.warning("No watch id or type %s not allow!", type(targets))
+        data = kwargs["kwargs"]
+        for account in self._accounts(data):
+            account.log.debug("%s: update all information: %s", account.coordinator.controller.getUserName(), ", ".join(account.wuids))
+            await account.coordinator.async_update_xplora_data(account.wuids)
 
 
 class XploraRefreshFunctionsService(XploraService):
     """Create a service that refreshes the alarm/silent/safezone data on demand."""
 
-    async def async_refresh_functions(self, targets: list[str] | None = None, **kwargs: Any) -> None:
+    async def async_refresh_functions(self, **kwargs: Any) -> None:
         """Force a functions (alarm/silent/safezone) refresh, bypassing the functions interval."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        if isinstance(targets, list):
-            if "all" in targets:
-                targets = coordinator.controller.getWatchUserIDs()
-            log.debug("%s: refresh functions data: %s", coordinator.controller.getUserName(), {", ".join(targets)})
-            await coordinator.async_refresh_functions(targets)
-        else:
-            log.warning("No watch id or type %s not allow!", type(targets))
+        data = kwargs["kwargs"]
+        for account in self._accounts(data):
+            account.log.debug("%s: refresh functions data: %s", account.coordinator.controller.getUserName(), ", ".join(account.wuids))
+            await account.coordinator.async_refresh_functions(account.wuids)
 
 
 class XploraFetchHistoryService(XploraService):
@@ -582,79 +561,67 @@ class XploraFetchHistoryService(XploraService):
     keep a long-term archive: each run stores that day's complete track in the per-day history Store.
     """
 
-    async def async_fetch_history(self, targets: list[str] | None = None, date: str | None = None, **kwargs: Any) -> None:
+    async def async_fetch_history(self, **kwargs: Any) -> None:
         """Fetch `date` (default yesterday) for the target watch(es), forcing a fresh pull + cache."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        if not isinstance(targets, list):
-            log.warning("No watch id or type %s not allow!", type(targets))
-            return
-        if "all" in targets:
-            targets = coordinator.controller.getWatchUserIDs()
-        day_key = (date or "").strip() or coordinator.history_yesterday_key()
-        for watch_id in targets:
-            log.debug("fetch location history for %s on %s", watch_id, day_key)
-            with self._api_call_guard("Fetch history", entry_id) as guard:
-                await coordinator.async_fetch_history_day(watch_id, day_key, force=True)
-            if guard.failed:
-                break
-        # Push the refreshed cache to the entities so the sensor's day list / count update.
-        coordinator.async_update_listeners()
+        data = kwargs["kwargs"]
+        date = data.get(ATTR_SERVICE_DATE)
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            day_key = (date or "").strip() or coordinator.history_yesterday_key()
+            for watch_id in account.wuids:
+                account.log.debug("fetch location history for %s on %s", watch_id, day_key)
+                with self._api_call_guard("Fetch history", account.entry_id) as guard:
+                    await coordinator.async_fetch_history_day(watch_id, day_key, force=True)
+                if guard.failed:
+                    break
+            # Push the refreshed cache to the entities so the sensor's day list / count update.
+            coordinator.async_update_listeners()
 
 
 class XploraDeleteMessageFromAppService(XploraService):
     """Create a service that can be remove message from Watch."""
 
-    async def async_delete_message_from_app(self, message_id: str = "", targets: list[str] | None = None, **kwargs: Any) -> None:
+    async def async_delete_message_from_app(self, **kwargs: Any) -> None:
         """Delete a message to one Watch."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        if isinstance(targets, list):
-            msg_id = message_id.strip()
-            if "all" in targets:
-                targets = coordinator.controller.getWatchUserIDs()
-            if not msg_id:
-                log.warning("You must provide an ID!")
-            else:
-                for watch_id in targets:
-                    log.debug("remove message %s from %s", msg_id, watch_id)
-                    with self._api_call_guard("Delete message", entry_id) as guard:
-                        if not await coordinator._with_recovery(
-                            lambda: coordinator.controller.deleteMessageFromApp(wuid=watch_id, msgId=msg_id)
-                        ):
-                            log.error("Message cannot deleted!")
-                    if guard.failed:
-                        break
-        else:
-            log.warning("No watch id or type %s not allow!", type(targets))
+        data = kwargs["kwargs"]
+        accounts = self._accounts(data)
+        msg_id = str(data[ATTR_SERVICE_MSGID]).strip()
+        if not msg_id:
+            accounts[0].log.warning("You must provide an ID!")
+            return
+        for account in accounts:
+            coordinator = account.coordinator
+            for watch_id in account.wuids:
+                account.log.debug("remove message %s from %s", msg_id, watch_id)
+                with self._api_call_guard("Delete message", account.entry_id) as guard:
+                    if not await coordinator._with_recovery(
+                        lambda: coordinator.controller.deleteMessageFromApp(wuid=watch_id, msgId=msg_id)
+                    ):
+                        account.log.error("Message cannot deleted!")
+                if guard.failed:
+                    break
 
 
 class XploraMessageService(XploraService):
     """Create a service that can be send message to Watch."""
 
-    async def async_send_message(self, message: str = "", targets: list[str] | None = None, **kwargs: Any) -> None:
+    async def async_send_message(self, **kwargs: Any) -> None:
         """Send message to Watch."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        if isinstance(targets, list):
-            msg = message.strip()
-            if "all" in targets:
-                targets = coordinator.controller.getWatchUserIDs()
-            if not msg:
-                log.warning("Message is empty!")
-            else:
-                for watch_id in targets:
-                    log.debug("Sending message '%s' to '%s'", msg, watch_id)
-                    with self._api_call_guard("Send message", entry_id) as guard:
-                        if not await coordinator._with_recovery(lambda: coordinator.controller.sendText(text=msg, wuid=watch_id)):
-                            log.error("Message cannot send!")
-                    if guard.failed:
-                        break
-        else:
-            log.warning("No watch id or type %s not allowed!", type(targets))
+        data = kwargs["kwargs"]
+        accounts = self._accounts(data)
+        msg = str(data[ATTR_SERVICE_MSG]).strip()
+        if not msg:
+            accounts[0].log.warning("Message is empty!")
+            return
+        for account in accounts:
+            coordinator = account.coordinator
+            for watch_id in account.wuids:
+                account.log.debug("Sending message '%s' to '%s'", msg, watch_id)
+                with self._api_call_guard("Send message", account.entry_id) as guard:
+                    if not await coordinator._with_recovery(lambda: coordinator.controller.sendText(text=msg, wuid=watch_id)):
+                        account.log.error("Message cannot send!")
+                if guard.failed:
+                    break
 
 
 class XploraMessageSensorUpdateService(XploraService):
@@ -662,42 +629,37 @@ class XploraMessageSensorUpdateService(XploraService):
 
     coordinator: XploraDataUpdateCoordinator
 
-    async def async_read_message(self, targets: list[str] | None = None, **kwargs: Any) -> None:
+    async def async_read_message(self, **kwargs: Any) -> None:
         """Read the messages from account."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        self.coordinator = self._hass.data[DOMAIN][entry_id]
-        if not isinstance(targets, list):
-            log.warning("No watch id or type %s not allowed!", type(targets))
-            return
-        old_state: dict[str, Any] = self.coordinator.data
-        config_entry = self.coordinator.config_entry
-        resolved = resolve(config_entry.options if config_entry else {})
-        limit: int = resolved.message
-        show_remove_msg = resolved.remove_message
-        if "all" in targets:
-            targets = self.coordinator.controller.getWatchUserIDs()
-        # Token expired / rate-limited / connection drop mid-read: the guard logs it cleanly (the gate
-        # already attempted recovery for an expired token) and we still persist whatever was gathered
-        # before the failure, letting the next coordinator poll recover the session.
-        with self._api_call_guard("Read messages", entry_id):
-            for watch in targets:
-                res_chats = await self.coordinator._with_recovery(lambda: self.coordinator.message_data(watch, limit, show_remove_msg))
-                if res_chats:
-                    for chat in res_chats.get("list") or []:
-                        chat_type = chat.get("type")
-                        msg_id = chat.get("msgId")
-                        if chat_type == "VOICE":
-                            await self._fetch_chat_voice(watch, msg_id)
-                        elif chat_type == "SHORT_VIDEO":
-                            await self._fetch_chat_short_video(watch, msg_id)
-                        elif chat_type == "IMAGE":
-                            await self._fetch_chat_image(watch, msg_id)
-                    new_data_msg: dict[str, Any] = old_state.get(watch, {}) if isinstance(old_state, dict) else {}
-                    if new_data_msg:
-                        new_data_msg.update({SENSOR_MESSAGE: res_chats})
-                        old_state.update({watch: new_data_msg})
-        await self.coordinator.async_update_xplora_data(new_data=old_state)
+        data = kwargs["kwargs"]
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            self.coordinator = coordinator
+            old_state: dict[str, Any] = coordinator.data
+            resolved = resolve(coordinator._entry.options)
+            limit: int = resolved.message
+            show_remove_msg = resolved.remove_message
+            # Token expired / rate-limited / connection drop mid-read: the guard logs it cleanly (the
+            # gate already attempted recovery for an expired token) and we still persist whatever was
+            # gathered before the failure, letting the next coordinator poll recover the session.
+            with self._api_call_guard("Read messages", account.entry_id):
+                for watch in account.wuids:
+                    res_chats = await coordinator._with_recovery(lambda: coordinator.message_data(watch, limit, show_remove_msg))
+                    if res_chats:
+                        for chat in res_chats.get("list") or []:
+                            chat_type = chat.get("type")
+                            msg_id = chat.get("msgId")
+                            if chat_type == "VOICE":
+                                await self._fetch_chat_voice(watch, msg_id)
+                            elif chat_type == "SHORT_VIDEO":
+                                await self._fetch_chat_short_video(watch, msg_id)
+                            elif chat_type == "IMAGE":
+                                await self._fetch_chat_image(watch, msg_id)
+                        new_data_msg: dict[str, Any] = old_state.get(watch, {}) if isinstance(old_state, dict) else {}
+                        if new_data_msg:
+                            new_data_msg.update({SENSOR_MESSAGE: res_chats})
+                            old_state.update({watch: new_data_msg})
+            await coordinator.async_update_xplora_data(new_data=old_state)
 
     async def _fetch_chat_voice(self, watch_id: str, msg_id: str) -> None:
         # Already downloaded -> skip the remote (rate-limited) fetch and serve the cached file.
@@ -730,69 +692,62 @@ class XploraMessageSensorUpdateService(XploraService):
 class XploraShutdownService(XploraService):
     """Create a service that shuts down Xplora."""
 
-    async def async_shutdown(self, targets: list[str] | None = None, **kwargs: Any) -> None:
+    async def async_shutdown(self, **kwargs: Any) -> None:
         """Turn off watch."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        if isinstance(targets, list):
-            for watch in self._guardian_targets(coordinator, targets, "shut down the watch", log):
-                with self._api_call_guard("Shutdown", entry_id) as guard:
+        data = kwargs["kwargs"]
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            for watch in self._guardian_targets(coordinator, account.wuids, "shut down the watch", account.log):
+                with self._api_call_guard("Shutdown", account.entry_id) as guard:
                     accepted = await coordinator._with_recovery(lambda: coordinator.controller.shutdown(watch))
-                    log.debug("Shutdown result: %s", accepted)
+                    account.log.debug("Shutdown result: %s", accepted)
                     if not accepted:
                         # False == the backend refused (typically the watch is off/offline).
-                        log.warning("Shutdown was not accepted for watch %s (it may be off or offline)", watch[25:])
+                        account.log.warning("Shutdown was not accepted for watch %s (it may be off or offline)", watch[25:])
                 if guard.failed:
-                    break
-        else:
-            log.warning("No watch ID or type %s not allowed!", type(targets))
+                    return
 
 
 class XploraRebootService(XploraService):
     """Create a service that reboots a watch (parity with the app's `reboot(uid)` mutation)."""
 
-    async def async_reboot(self, targets: list[str] | None = None, **kwargs: Any) -> None:
+    async def async_reboot(self, **kwargs: Any) -> None:
         """Reboot watch."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        if isinstance(targets, list):
-            for watch in self._guardian_targets(coordinator, targets, "reboot the watch", log):
-                with self._api_call_guard("Reboot", entry_id) as guard:
+        data = kwargs["kwargs"]
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            for watch in self._guardian_targets(coordinator, account.wuids, "reboot the watch", account.log):
+                with self._api_call_guard("Reboot", account.entry_id) as guard:
                     accepted = await coordinator._with_recovery(lambda: coordinator.controller.reboot(watch))
-                    log.debug("Reboot result: %s", accepted)
+                    account.log.debug("Reboot result: %s", accepted)
                     if not accepted:
                         # False == the backend refused (typically the watch is off/offline).
-                        log.warning("Reboot was not accepted for watch %s (it may be off or offline)", watch[25:])
+                        account.log.warning("Reboot was not accepted for watch %s (it may be off or offline)", watch[25:])
                 if guard.failed:
-                    break
-        else:
-            log.warning("No watch ID or type %s not allowed!", type(targets))
+                    return
 
 
 class XploraLogoutService(XploraService):
-    """Create a service that logs out the account (server-side `ExpireToken` + local clear).
+    """Create a service that logs out the account(s) behind the targeted device(s).
 
-    Account-level, not per-watch: it invalidates the session token shared by every watch on
-    the account. When polling is enabled (`CONF_SCAN_INTERVAL` > 0) the next coordinator poll
-    re-logs in automatically, so it also works as a "force re-auth". With polling disabled
-    (`CONF_SCAN_INTERVAL` == 0) nothing re-authenticates until the next manual `see`/reload --
-    the account simply stays logged out, which is the expected logout behavior.
+    Account-level, not per-watch: it invalidates the session token shared by every watch on the
+    account behind the targeted device. When polling is enabled (`CONF_SCAN_INTERVAL` > 0) the next
+    coordinator poll re-logs in automatically, so it also works as a "force re-auth". With polling
+    disabled (`CONF_SCAN_INTERVAL` == 0) nothing re-authenticates until the next manual `see`/reload
+    -- the account simply stays logged out, which is the expected logout behavior.
     """
 
     async def async_logout(self, **kwargs: Any) -> None:
-        """Log out the account that owns the resolved config entry."""
-        entry_id = str(kwargs["kwargs"]["user"][0]).split(" ", maxsplit=1)[0]
-        log = Log(entry_id=entry_id)
-        coordinator: XploraDataUpdateCoordinator = self._hass.data[DOMAIN][entry_id]
-        try:
-            acknowledged = await coordinator.controller.logout()
-            log.debug("Logout result (server acknowledged: %s)", acknowledged)
-        except (RateLimitError, XploraConnectionError, AuthError) as error:
-            # Best-effort: the local token was already cleared inside `logout()`, so the next
-            # poll re-logs in regardless. Just surface a clean warning instead of a traceback.
-            log.warning("Logout could not reach the Xplora server (%s); local session cleared anyway.", type(error).__name__)
+        """Log out each account behind the targeted device(s) (one logout per account)."""
+        data = kwargs["kwargs"]
+        for account in self._accounts(data):
+            try:
+                acknowledged = await account.coordinator.controller.logout()
+                account.log.debug("Logout result (server acknowledged: %s)", acknowledged)
+            except (RateLimitError, XploraConnectionError, AuthError) as error:
+                # Best-effort: the local token was already cleared inside `logout()`, so the next
+                # poll re-logs in regardless. Just surface a clean warning instead of a traceback.
+                account.log.warning("Logout could not reach the Xplora server (%s); local session cleared anyway.", type(error).__name__)
 
 
 class XploraAlarmService(XploraService):
@@ -801,62 +756,68 @@ class XploraAlarmService(XploraService):
     async def async_create(self, **kwargs: Any) -> None:
         """Create a new alarm on each target watch."""
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         occur_min = time_str_to_minutes(data[ATTR_SERVICE_START])
         week_repeat = weekdays_to_week_repeat(data[ATTR_SERVICE_WEEKDAYS])
         name = data.get(ATTR_SERVICE_NAME, "")
-        for wuid in self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log):
-            with self._api_call_guard("Create alarm", entry_id) as guard:
-                ok = await coordinator._with_recovery(lambda: coordinator.controller.addAlarmTime(wuid, occur_min, week_repeat, name))
-                log.debug("Create alarm on %s: %s", wuid, ok)
-                await self._refresh_list(coordinator, wuid, ATTR_ALARM)
-            if guard.failed:
-                break
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            for wuid in self._guardian_targets(coordinator, account.wuids, "change the watch's alarms", account.log):
+                with self._api_call_guard("Create alarm", account.entry_id) as guard:
+                    ok = await coordinator._with_recovery(lambda: coordinator.controller.addAlarmTime(wuid, occur_min, week_repeat, name))
+                    account.log.debug("Create alarm on %s: %s", wuid, ok)
+                    await self._refresh_list(coordinator, wuid, ATTR_ALARM)
+                if guard.failed:
+                    return
 
     async def async_update(self, **kwargs: Any) -> None:
         """Modify an existing alarm (time, repeat days and/or name)."""
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         alarm_id = data[ATTR_SERVICE_ALARM_ID]
-        # Gate up front: this handler fires the mutation before the per-watch refresh loop, so the
-        # Contact check must run first or the control mutation would leak out before the raise.
-        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log)
         occur_min = time_str_to_minutes(data[ATTR_SERVICE_START]) if ATTR_SERVICE_START in data else None
         week_repeat = weekdays_to_week_repeat(data[ATTR_SERVICE_WEEKDAYS]) if ATTR_SERVICE_WEEKDAYS in data else None
         name = data.get(ATTR_SERVICE_NAME)
-        with self._api_call_guard("Update alarm", entry_id):
-            ok = await coordinator._with_recovery(lambda: coordinator.controller.modifyAlarmTime(alarm_id, occur_min, week_repeat, name))
-            log.debug("Update alarm %s: %s", alarm_id, ok)
-            for wuid in targets:
-                await self._refresh_list(coordinator, wuid, ATTR_ALARM)
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            # Gate up front: this handler fires the mutation before the per-watch refresh loop, so the
+            # Contact check must run first or the control mutation would leak out before the raise.
+            targets = self._guardian_targets(coordinator, account.wuids, "change the watch's alarms", account.log)
+            with self._api_call_guard("Update alarm", account.entry_id):
+                ok = await coordinator._with_recovery(
+                    lambda: coordinator.controller.modifyAlarmTime(alarm_id, occur_min, week_repeat, name)
+                )
+                account.log.debug("Update alarm %s: %s", alarm_id, ok)
+                for wuid in targets:
+                    await self._refresh_list(coordinator, wuid, ATTR_ALARM)
 
     async def async_delete(self, **kwargs: Any) -> None:
         """Delete an alarm."""
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         alarm_id = data[ATTR_SERVICE_ALARM_ID]
-        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log)
-        with self._api_call_guard("Delete alarm", entry_id):
-            ok = await coordinator._with_recovery(lambda: coordinator.controller.removeAlarmTime(alarm_id))
-            log.debug("Delete alarm %s: %s", alarm_id, ok)
-            for wuid in targets:
-                await self._refresh_list(coordinator, wuid, ATTR_ALARM)
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            targets = self._guardian_targets(coordinator, account.wuids, "change the watch's alarms", account.log)
+            with self._api_call_guard("Delete alarm", account.entry_id):
+                ok = await coordinator._with_recovery(lambda: coordinator.controller.removeAlarmTime(alarm_id))
+                account.log.debug("Delete alarm %s: %s", alarm_id, ok)
+                for wuid in targets:
+                    await self._refresh_list(coordinator, wuid, ATTR_ALARM)
 
     async def async_set_enabled(self, **kwargs: Any) -> None:
         """Enable or disable an alarm."""
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         alarm_id = data[ATTR_SERVICE_ALARM_ID]
         enabled = data[ATTR_SERVICE_ENABLED]
-        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log)
-        with self._api_call_guard("Set alarm enabled", entry_id):
-            if enabled:
-                ok = await coordinator._with_recovery(lambda: coordinator.controller.setEnableAlarmTime(alarm_id))
-            else:
-                ok = await coordinator._with_recovery(lambda: coordinator.controller.setDisableAlarmTime(alarm_id))
-            log.debug("Set alarm %s enabled=%s: %s", alarm_id, enabled, ok)
-            for wuid in targets:
-                await self._refresh_list(coordinator, wuid, ATTR_ALARM)
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            targets = self._guardian_targets(coordinator, account.wuids, "change the watch's alarms", account.log)
+            with self._api_call_guard("Set alarm enabled", account.entry_id):
+                if enabled:
+                    ok = await coordinator._with_recovery(lambda: coordinator.controller.setEnableAlarmTime(alarm_id))
+                else:
+                    ok = await coordinator._with_recovery(lambda: coordinator.controller.setDisableAlarmTime(alarm_id))
+                account.log.debug("Set alarm %s enabled=%s: %s", alarm_id, enabled, ok)
+                for wuid in targets:
+                    await self._refresh_list(coordinator, wuid, ATTR_ALARM)
 
     async def async_set_all_enabled(self, enabled: bool, **kwargs: Any) -> None:
         """Enable or disable every alarm on each target watch in one call.
@@ -867,24 +828,25 @@ class XploraAlarmService(XploraService):
         on the first recoverable failure the loop breaks so we stop hammering the remaining watches.
         """
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         action = "Turn all alarms on" if enabled else "Turn all alarms off"
-        for wuid in self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's alarms", log):
-            with self._api_call_guard(action, entry_id) as guard:
-                alarms = await coordinator._with_recovery(lambda: coordinator.controller.getWatchAlarm(wuid))
-                if isinstance(alarms, FetchError):
-                    log.warning("%s: %s", alarms.operation, alarms.message)
-                    continue
-                for alarm in alarms:
-                    aid = alarm["id"]
-                    if enabled:
-                        await coordinator._with_recovery(lambda: coordinator.controller.setEnableAlarmTime(aid))
-                    else:
-                        await coordinator._with_recovery(lambda: coordinator.controller.setDisableAlarmTime(aid))
-                    log.debug("Set alarm %s enabled=%s", aid, enabled)
-                await self._refresh_list(coordinator, wuid, ATTR_ALARM)
-            if guard.failed:
-                break
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            for wuid in self._guardian_targets(coordinator, account.wuids, "change the watch's alarms", account.log):
+                with self._api_call_guard(action, account.entry_id) as guard:
+                    alarms = await coordinator._with_recovery(lambda: coordinator.controller.getWatchAlarm(wuid))
+                    if isinstance(alarms, FetchError):
+                        account.log.warning("%s: %s", alarms.operation, alarms.message)
+                        continue
+                    for alarm in alarms:
+                        aid = alarm["id"]
+                        if enabled:
+                            await coordinator._with_recovery(lambda: coordinator.controller.setEnableAlarmTime(aid))
+                        else:
+                            await coordinator._with_recovery(lambda: coordinator.controller.setDisableAlarmTime(aid))
+                        account.log.debug("Set alarm %s enabled=%s", aid, enabled)
+                    await self._refresh_list(coordinator, wuid, ATTR_ALARM)
+                if guard.failed:
+                    return
 
 
 class XploraSilentService(XploraService):
@@ -893,60 +855,64 @@ class XploraSilentService(XploraService):
     async def async_create(self, **kwargs: Any) -> None:
         """Create a new silent-time window on each target watch."""
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         start = time_str_to_minutes(data[ATTR_SERVICE_START])
         end = time_str_to_minutes(data[ATTR_SERVICE_END])
         week_repeat = weekdays_to_week_repeat(data[ATTR_SERVICE_WEEKDAYS])
-        for wuid in self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log):
-            with self._api_call_guard("Create silent time", entry_id) as guard:
-                ok = await coordinator._with_recovery(lambda: coordinator.controller.addSilentTime(wuid, start, end, week_repeat))
-                log.debug("Create silent on %s: %s", wuid, ok)
-                await self._refresh_list(coordinator, wuid, ATTR_SILENT)
-            if guard.failed:
-                break
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            for wuid in self._guardian_targets(coordinator, account.wuids, "change the watch's silent times", account.log):
+                with self._api_call_guard("Create silent time", account.entry_id) as guard:
+                    ok = await coordinator._with_recovery(lambda: coordinator.controller.addSilentTime(wuid, start, end, week_repeat))
+                    account.log.debug("Create silent on %s: %s", wuid, ok)
+                    await self._refresh_list(coordinator, wuid, ATTR_SILENT)
+                if guard.failed:
+                    return
 
     async def async_update(self, **kwargs: Any) -> None:
         """Modify an existing silent-time window (start, end and/or repeat days)."""
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         silent_id = data[ATTR_SERVICE_SILENT_ID]
-        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log)
         start = time_str_to_minutes(data[ATTR_SERVICE_START]) if ATTR_SERVICE_START in data else None
         end = time_str_to_minutes(data[ATTR_SERVICE_END]) if ATTR_SERVICE_END in data else None
         week_repeat = weekdays_to_week_repeat(data[ATTR_SERVICE_WEEKDAYS]) if ATTR_SERVICE_WEEKDAYS in data else None
-        with self._api_call_guard("Update silent time", entry_id):
-            ok = await coordinator._with_recovery(lambda: coordinator.controller.modifySilentTime(silent_id, start, end, week_repeat))
-            log.debug("Update silent %s: %s", silent_id, ok)
-            for wuid in targets:
-                await self._refresh_list(coordinator, wuid, ATTR_SILENT)
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            targets = self._guardian_targets(coordinator, account.wuids, "change the watch's silent times", account.log)
+            with self._api_call_guard("Update silent time", account.entry_id):
+                ok = await coordinator._with_recovery(lambda: coordinator.controller.modifySilentTime(silent_id, start, end, week_repeat))
+                account.log.debug("Update silent %s: %s", silent_id, ok)
+                for wuid in targets:
+                    await self._refresh_list(coordinator, wuid, ATTR_SILENT)
 
     async def async_delete(self, **kwargs: Any) -> None:
         """Delete a silent-time window."""
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         silent_id = data[ATTR_SERVICE_SILENT_ID]
-        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log)
-        with self._api_call_guard("Delete silent time", entry_id):
-            ok = await coordinator._with_recovery(lambda: coordinator.controller.removeSilentTime(silent_id))
-            log.debug("Delete silent %s: %s", silent_id, ok)
-            for wuid in targets:
-                await self._refresh_list(coordinator, wuid, ATTR_SILENT)
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            targets = self._guardian_targets(coordinator, account.wuids, "change the watch's silent times", account.log)
+            with self._api_call_guard("Delete silent time", account.entry_id):
+                ok = await coordinator._with_recovery(lambda: coordinator.controller.removeSilentTime(silent_id))
+                account.log.debug("Delete silent %s: %s", silent_id, ok)
+                for wuid in targets:
+                    await self._refresh_list(coordinator, wuid, ATTR_SILENT)
 
     async def async_set_enabled(self, **kwargs: Any) -> None:
         """Enable or disable a silent-time window."""
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         silent_id = data[ATTR_SERVICE_SILENT_ID]
         enabled = data[ATTR_SERVICE_ENABLED]
-        targets = self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log)
-        with self._api_call_guard("Set silent enabled", entry_id):
-            if enabled:
-                ok = await coordinator._with_recovery(lambda: coordinator.controller.setEnableSilentTime(silent_id))
-            else:
-                ok = await coordinator._with_recovery(lambda: coordinator.controller.setDisableSilentTime(silent_id))
-            log.debug("Set silent %s enabled=%s: %s", silent_id, enabled, ok)
-            for wuid in targets:
-                await self._refresh_list(coordinator, wuid, ATTR_SILENT)
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            targets = self._guardian_targets(coordinator, account.wuids, "change the watch's silent times", account.log)
+            with self._api_call_guard("Set silent enabled", account.entry_id):
+                if enabled:
+                    ok = await coordinator._with_recovery(lambda: coordinator.controller.setEnableSilentTime(silent_id))
+                else:
+                    ok = await coordinator._with_recovery(lambda: coordinator.controller.setDisableSilentTime(silent_id))
+                account.log.debug("Set silent %s enabled=%s: %s", silent_id, enabled, ok)
+                for wuid in targets:
+                    await self._refresh_list(coordinator, wuid, ATTR_SILENT)
 
     async def async_set_all_enabled(self, enabled: bool, **kwargs: Any) -> None:
         """Enable or disable every silent-time window on each target watch in one call.
@@ -955,21 +921,22 @@ class XploraSilentService(XploraService):
         routed through the recovery gate, and the loop breaks on the first recoverable failure.
         """
         data = kwargs["kwargs"]
-        entry_id, log, coordinator = self._resolve(data)
         action = "Turn all silents on" if enabled else "Turn all silents off"
-        for wuid in self._guardian_targets(coordinator, data[ATTR_SERVICE_TARGET], "change the watch's silent times", log):
-            with self._api_call_guard(action, entry_id) as guard:
-                silents = await coordinator._with_recovery(lambda: coordinator.controller.getSilentTime(wuid))
-                if isinstance(silents, FetchError):
-                    log.warning("%s: %s", silents.operation, silents.message)
-                    continue
-                for silent in silents:
-                    sid = silent["id"]
-                    if enabled:
-                        await coordinator._with_recovery(lambda: coordinator.controller.setEnableSilentTime(sid))
-                    else:
-                        await coordinator._with_recovery(lambda: coordinator.controller.setDisableSilentTime(sid))
-                    log.debug("Set silent %s enabled=%s", sid, enabled)
-                await self._refresh_list(coordinator, wuid, ATTR_SILENT)
-            if guard.failed:
-                break
+        for account in self._accounts(data):
+            coordinator = account.coordinator
+            for wuid in self._guardian_targets(coordinator, account.wuids, "change the watch's silent times", account.log):
+                with self._api_call_guard(action, account.entry_id) as guard:
+                    silents = await coordinator._with_recovery(lambda: coordinator.controller.getSilentTime(wuid))
+                    if isinstance(silents, FetchError):
+                        account.log.warning("%s: %s", silents.operation, silents.message)
+                        continue
+                    for silent in silents:
+                        sid = silent["id"]
+                        if enabled:
+                            await coordinator._with_recovery(lambda: coordinator.controller.setEnableSilentTime(sid))
+                        else:
+                            await coordinator._with_recovery(lambda: coordinator.controller.setDisableSilentTime(sid))
+                        account.log.debug("Set silent %s enabled=%s", sid, enabled)
+                    await self._refresh_list(coordinator, wuid, ATTR_SILENT)
+                if guard.failed:
+                    return

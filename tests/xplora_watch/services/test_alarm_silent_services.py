@@ -4,6 +4,10 @@ A MagicMock coordinator stands in for the real one: the services only touch
 ``coordinator.controller`` (CRUD + list fetchers), ``coordinator.data`` and
 ``coordinator.async_set_updated_data``. This isolates the conversion + refresh logic from the
 network/GraphQL harness.
+
+Targeting is device-based (ADR 0003): a real ``MockConfigEntry`` + device-registry device per watch
+let the handlers resolve ``device_id`` -> ``(account, wuid)`` against the MagicMock coordinator. The
+device <-> account resolution itself is covered in ``test_device_targeting.py``.
 """
 
 from __future__ import annotations
@@ -15,6 +19,8 @@ import pytest
 import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import device_registry as dr
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.xplora_watch.const import (
     ATTR_SERVICE_ALARM_ID,
@@ -23,8 +29,6 @@ from custom_components.xplora_watch.const import (
     ATTR_SERVICE_NAME,
     ATTR_SERVICE_SILENT_ID,
     ATTR_SERVICE_START,
-    ATTR_SERVICE_TARGET,
-    ATTR_SERVICE_USER,
     ATTR_SERVICE_WEEKDAYS,
     DOMAIN,
 )
@@ -39,7 +43,7 @@ from custom_components.xplora_watch.services import (
 )
 
 WUID = "watch-1"
-ENTRY_ID = "entry-1"
+UNIQUE_ID = "uid-1"
 
 
 async def _passthrough_recovery(coro_factory):
@@ -53,24 +57,41 @@ async def _passthrough_recovery(coro_factory):
     return await coro_factory()
 
 
-def _install(hass: HomeAssistant) -> MagicMock:
-    """Install a MagicMock coordinator under hass.data and return it."""
+def _install(hass: HomeAssistant, wuids: tuple[str, ...] = (WUID,)) -> MagicMock:
+    """Install a MagicMock coordinator + a real config entry with one device per watch.
+
+    Returns the coordinator; ``coord._device_ids`` maps each wuid to its HA device id (use
+    ``_kwargs`` to build the ``device_id`` target payload).
+    """
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=UNIQUE_ID, data={}, options={})
+    entry.add_to_hass(hass)
+
     coord = MagicMock()
     coord.controller = MagicMock()
-    coord.data = {WUID: {"alarm": [], "silent": []}}
+    coord._entry = entry
+    coord.data = {w: {"alarm": [], "silent": []} for w in wuids}
     coord.async_set_updated_data = MagicMock()
-    coord.controller.getWatchUserIDs.return_value = [WUID]
+    coord.controller.getWatchUserIDs.return_value = list(wuids)
     coord._with_recovery = _passthrough_recovery
     # Default to a Guardian account (fail-open): the Contact-gate tests below override this. Without
     # it, a bare MagicMock would return a truthy stub from is_confirmed_contact and wrongly gate
     # every Guardian-path test.
     coord.is_confirmed_contact = MagicMock(return_value=False)
-    hass.data.setdefault(DOMAIN, {})[ENTRY_ID] = coord
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coord
+
+    registry = dr.async_get(hass)
+    coord._device_ids = {
+        w: registry.async_get_or_create(config_entry_id=entry.entry_id, identifiers={(DOMAIN, f"{UNIQUE_ID}_{w}")}).id for w in wuids
+    }
     return coord
 
 
-def _kwargs(**extra) -> dict:
-    return {"kwargs": {ATTR_SERVICE_TARGET: [WUID], ATTR_SERVICE_USER: [f"{ENTRY_ID} (parent)"], **extra}}
+def _service(hass: HomeAssistant, coord: MagicMock, cls):
+    return cls(hass, coord._entry.entry_id)
+
+
+def _kwargs(coord: MagicMock, wuids: tuple[str, ...] = (WUID,), **extra) -> dict:
+    return {"kwargs": {"device_id": [coord._device_ids[w] for w in wuids], **extra}}
 
 
 async def test_create_alarm_converts_and_refreshes(hass: HomeAssistant) -> None:
@@ -78,8 +99,8 @@ async def test_create_alarm_converts_and_refreshes(hass: HomeAssistant) -> None:
     coord.controller.addAlarmTime = AsyncMock(return_value=True)
     coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": "ENABLE"}])
 
-    await XploraAlarmService(hass, ENTRY_ID).async_create(
-        **_kwargs(**{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon", "tue"], ATTR_SERVICE_NAME: "Wake"})
+    await _service(hass, coord, XploraAlarmService).async_create(
+        **_kwargs(coord, **{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon", "tue"], ATTR_SERVICE_NAME: "Wake"})
     )
 
     # 08:00 -> 480 min; ["mon","tue"] -> "0110000" (Sun-first index).
@@ -95,7 +116,9 @@ async def test_update_alarm_only_forwards_supplied_fields(hass: HomeAssistant) -
     coord.controller.modifyAlarmTime = AsyncMock(return_value=True)
     coord.controller.getWatchAlarm = AsyncMock(return_value=[])
 
-    await XploraAlarmService(hass, ENTRY_ID).async_update(**_kwargs(**{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_START: "09:30"}))
+    await _service(hass, coord, XploraAlarmService).async_update(
+        **_kwargs(coord, **{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_START: "09:30"})
+    )
 
     # weekdays/name omitted -> passed as None so the mutation leaves them unchanged.
     coord.controller.modifyAlarmTime.assert_awaited_once_with("a1", 570, None, None)
@@ -106,7 +129,7 @@ async def test_delete_alarm(hass: HomeAssistant) -> None:
     coord.controller.removeAlarmTime = AsyncMock(return_value=True)
     coord.controller.getWatchAlarm = AsyncMock(return_value=[])
 
-    await XploraAlarmService(hass, ENTRY_ID).async_delete(**_kwargs(**{ATTR_SERVICE_ALARM_ID: "a1"}))
+    await _service(hass, coord, XploraAlarmService).async_delete(**_kwargs(coord, **{ATTR_SERVICE_ALARM_ID: "a1"}))
 
     coord.controller.removeAlarmTime.assert_awaited_once_with("a1")
     coord.async_set_updated_data.assert_called_once()
@@ -118,7 +141,9 @@ async def test_set_alarm_enabled(hass: HomeAssistant, enabled: bool, method: str
     setattr(coord.controller, method, AsyncMock(return_value=True))
     coord.controller.getWatchAlarm = AsyncMock(return_value=[])
 
-    await XploraAlarmService(hass, ENTRY_ID).async_set_enabled(**_kwargs(**{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_ENABLED: enabled}))
+    await _service(hass, coord, XploraAlarmService).async_set_enabled(
+        **_kwargs(coord, **{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_ENABLED: enabled})
+    )
 
     getattr(coord.controller, method).assert_awaited_once_with("a1")
 
@@ -128,8 +153,8 @@ async def test_create_silent_converts_and_refreshes(hass: HomeAssistant) -> None
     coord.controller.addSilentTime = AsyncMock(return_value=True)
     coord.controller.getSilentTime = AsyncMock(return_value=[{"id": "s1", "status": "ENABLE"}])
 
-    await XploraSilentService(hass, ENTRY_ID).async_create(
-        **_kwargs(**{ATTR_SERVICE_START: "22:00", ATTR_SERVICE_END: "07:00", ATTR_SERVICE_WEEKDAYS: ["sat", "sun"]})
+    await _service(hass, coord, XploraSilentService).async_create(
+        **_kwargs(coord, **{ATTR_SERVICE_START: "22:00", ATTR_SERVICE_END: "07:00", ATTR_SERVICE_WEEKDAYS: ["sat", "sun"]})
     )
 
     # 22:00 -> 1320, 07:00 -> 420; ["sat","sun"] -> "1000001".
@@ -142,7 +167,9 @@ async def test_update_silent_partial(hass: HomeAssistant) -> None:
     coord.controller.modifySilentTime = AsyncMock(return_value=True)
     coord.controller.getSilentTime = AsyncMock(return_value=[])
 
-    await XploraSilentService(hass, ENTRY_ID).async_update(**_kwargs(**{ATTR_SERVICE_SILENT_ID: "s1", ATTR_SERVICE_END: "08:15"}))
+    await _service(hass, coord, XploraSilentService).async_update(
+        **_kwargs(coord, **{ATTR_SERVICE_SILENT_ID: "s1", ATTR_SERVICE_END: "08:15"})
+    )
 
     coord.controller.modifySilentTime.assert_awaited_once_with("s1", None, 495, None)
 
@@ -153,7 +180,7 @@ async def test_refresh_skips_on_fetch_error(hass: HomeAssistant) -> None:
     coord.controller.removeSilentTime = AsyncMock(return_value=True)
     coord.controller.getSilentTime = AsyncMock(return_value=FetchError("SlientTimes", "boom"))
 
-    await XploraSilentService(hass, ENTRY_ID).async_delete(**_kwargs(**{ATTR_SERVICE_SILENT_ID: "s1"}))
+    await _service(hass, coord, XploraSilentService).async_delete(**_kwargs(coord, **{ATTR_SERVICE_SILENT_ID: "s1"}))
 
     coord.async_set_updated_data.assert_not_called()
     assert coord.data[WUID]["silent"] == []
@@ -164,8 +191,8 @@ async def test_create_alarm_auth_error_is_clean(hass: HomeAssistant, caplog) -> 
     coord.controller.addAlarmTime = AsyncMock(side_effect=AuthError())
 
     with caplog.at_level(logging.WARNING):
-        await XploraAlarmService(hass, ENTRY_ID).async_create(
-            **_kwargs(**{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""})
+        await _service(hass, coord, XploraAlarmService).async_create(
+            **_kwargs(coord, **{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""})
         )
 
     assert "session token expired" in caplog.text
@@ -177,21 +204,14 @@ async def test_create_alarm_stops_after_first_recoverable_failure(hass: HomeAssi
     hammering the remaining watches (which would hit the same expired token / rate limit). With two
     targets and the first call raising RateLimitError, the controller is called exactly once.
     """
-    coord = _install(hass)
-    coord.controller.getWatchUserIDs.return_value = ["watch-1", "watch-2"]
+    coord = _install(hass, wuids=("watch-1", "watch-2"))
     coord.controller.addAlarmTime = AsyncMock(side_effect=RateLimitError("429"))
 
     with caplog.at_level(logging.WARNING):
-        await XploraAlarmService(hass, ENTRY_ID).async_create(
-            **{
-                "kwargs": {
-                    ATTR_SERVICE_TARGET: ["watch-1", "watch-2"],
-                    ATTR_SERVICE_USER: [f"{ENTRY_ID} (parent)"],
-                    ATTR_SERVICE_START: "08:00",
-                    ATTR_SERVICE_WEEKDAYS: ["mon"],
-                    ATTR_SERVICE_NAME: "",
-                }
-            }
+        await _service(hass, coord, XploraAlarmService).async_create(
+            **_kwargs(
+                coord, wuids=("watch-1", "watch-2"), **{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""}
+            )
         )
 
     coord.controller.addAlarmTime.assert_awaited_once()  # broke after watch-1; watch-2 never attempted
@@ -200,11 +220,9 @@ async def test_create_alarm_stops_after_first_recoverable_failure(hass: HomeAssi
 
 def test_create_alarm_schema_requires_core_fields() -> None:
     with pytest.raises(vol.Invalid):
-        BASE_CREATE_ALARM_SERVICE_SCHEMA({ATTR_SERVICE_TARGET: [WUID], ATTR_SERVICE_USER: [ENTRY_ID]})
+        BASE_CREATE_ALARM_SERVICE_SCHEMA({"device_id": [WUID]})  # missing start/weekdays
     # A complete payload validates and applies the default empty name.
-    out = BASE_CREATE_ALARM_SERVICE_SCHEMA(
-        {ATTR_SERVICE_TARGET: [WUID], ATTR_SERVICE_USER: [ENTRY_ID], ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"]}
-    )
+    out = BASE_CREATE_ALARM_SERVICE_SCHEMA({"device_id": [WUID], ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"]})
     assert out[ATTR_SERVICE_NAME] == ""
 
 
@@ -219,7 +237,7 @@ async def test_turn_all_alarms_toggles_every_entry(hass: HomeAssistant, enabled:
     # getWatchAlarm serves BOTH the enumerate-ids fetch and the post-toggle `_refresh_list` fetch.
     coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": "ENABLE"}, {"id": "a2", "status": "DISABLE"}])
 
-    await XploraAlarmService(hass, ENTRY_ID).async_set_all_enabled(enabled, **_kwargs())
+    await _service(hass, coord, XploraAlarmService).async_set_all_enabled(enabled, **_kwargs(coord))
 
     toggler = getattr(coord.controller, method)
     assert toggler.await_count == 2
@@ -236,7 +254,7 @@ async def test_turn_all_silents_toggles_every_entry(hass: HomeAssistant, enabled
     setattr(coord.controller, method, AsyncMock(return_value=True))
     coord.controller.getSilentTime = AsyncMock(return_value=[{"id": "s1", "status": "ENABLE"}, {"id": "s2", "status": "ENABLE"}])
 
-    await XploraSilentService(hass, ENTRY_ID).async_set_all_enabled(enabled, **_kwargs())
+    await _service(hass, coord, XploraSilentService).async_set_all_enabled(enabled, **_kwargs(coord))
 
     toggler = getattr(coord.controller, method)
     assert toggler.await_count == 2
@@ -251,7 +269,7 @@ async def test_turn_all_alarms_empty_list_is_idempotent(hass: HomeAssistant) -> 
     coord.controller.setEnableAlarmTime = AsyncMock(return_value=True)
     coord.controller.getWatchAlarm = AsyncMock(return_value=[])
 
-    await XploraAlarmService(hass, ENTRY_ID).async_set_all_enabled(True, **_kwargs())
+    await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord))
 
     coord.controller.setEnableAlarmTime.assert_not_awaited()
     coord.async_set_updated_data.assert_called_once()
@@ -265,7 +283,7 @@ async def test_turn_all_alarms_skips_watch_on_fetch_error(hass: HomeAssistant, c
     coord.controller.getWatchAlarm = AsyncMock(return_value=FetchError("Alarms", "boom"))
 
     with caplog.at_level(logging.WARNING):
-        await XploraAlarmService(hass, ENTRY_ID).async_set_all_enabled(True, **_kwargs())
+        await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord))
 
     coord.controller.setEnableAlarmTime.assert_not_awaited()
     coord.async_set_updated_data.assert_not_called()
@@ -279,19 +297,19 @@ async def test_turn_all_alarms_stops_after_first_recoverable_failure(hass: HomeA
     coord.controller.setEnableAlarmTime = AsyncMock(side_effect=RateLimitError("429"))
 
     with caplog.at_level(logging.WARNING):
-        await XploraAlarmService(hass, ENTRY_ID).async_set_all_enabled(True, **_kwargs())
+        await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord))
 
     coord.controller.setEnableAlarmTime.assert_awaited_once()  # broke after a1; a2 never attempted
     coord.async_set_updated_data.assert_not_called()
     assert "rate limit" in caplog.text
 
 
-def test_turn_all_schemas_require_target_and_user() -> None:
+def test_turn_all_schemas_accept_a_device_target() -> None:
     for schema in (BASE_TURN_ALL_ALARMS_SERVICE_SCHEMA, BASE_TURN_ALL_SILENTS_SERVICE_SCHEMA):
-        with pytest.raises(vol.Invalid):
-            schema({ATTR_SERVICE_TARGET: [WUID]})  # missing user
-        # target + user alone is a complete payload (the handler enumerates entries itself).
-        assert schema({ATTR_SERVICE_TARGET: [WUID], ATTR_SERVICE_USER: [ENTRY_ID]})
+        # No service-specific fields are required (the handler enumerates entries itself); a device
+        # target validates, and the empty resolution is rejected at runtime, not by the schema.
+        assert schema({"device_id": [WUID]}) == {"device_id": [WUID]}
+        assert schema({}) == {}
 
 
 # ----------------------------------------------------------------- Contact gate (Guardian-only CRUD)
@@ -308,8 +326,8 @@ async def test_create_alarm_contact_is_blocked(hass: HomeAssistant) -> None:
     coord.controller.addAlarmTime = AsyncMock(return_value=True)
 
     with pytest.raises(ServiceValidationError) as err:
-        await XploraAlarmService(hass, ENTRY_ID).async_create(
-            **_kwargs(**{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""})
+        await _service(hass, coord, XploraAlarmService).async_create(
+            **_kwargs(coord, **{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""})
         )
 
     # Localized client-policy error naming the blocked action.
@@ -326,7 +344,9 @@ async def test_update_alarm_contact_is_blocked_before_mutation(hass: HomeAssista
     coord.controller.modifyAlarmTime = AsyncMock(return_value=True)
 
     with pytest.raises(ServiceValidationError):
-        await XploraAlarmService(hass, ENTRY_ID).async_update(**_kwargs(**{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_START: "09:30"}))
+        await _service(hass, coord, XploraAlarmService).async_update(
+            **_kwargs(coord, **{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_START: "09:30"})
+        )
 
     coord.controller.modifyAlarmTime.assert_not_awaited()
 
@@ -337,7 +357,9 @@ async def test_set_silent_enabled_contact_is_blocked(hass: HomeAssistant) -> Non
     coord.controller.setEnableSilentTime = AsyncMock(return_value=True)
 
     with pytest.raises(ServiceValidationError):
-        await XploraSilentService(hass, ENTRY_ID).async_set_enabled(**_kwargs(**{ATTR_SERVICE_SILENT_ID: "s1", ATTR_SERVICE_ENABLED: True}))
+        await _service(hass, coord, XploraSilentService).async_set_enabled(
+            **_kwargs(coord, **{ATTR_SERVICE_SILENT_ID: "s1", ATTR_SERVICE_ENABLED: True})
+        )
 
     coord.controller.setEnableSilentTime.assert_not_awaited()
 
@@ -348,32 +370,26 @@ async def test_turn_all_alarms_contact_is_blocked(hass: HomeAssistant) -> None:
     coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": "ENABLE"}])
 
     with pytest.raises(ServiceValidationError):
-        await XploraAlarmService(hass, ENTRY_ID).async_set_all_enabled(True, **_kwargs())
+        await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord))
 
     coord.controller.getWatchAlarm.assert_not_awaited()  # not even the enumerate fetch fires
 
 
-async def test_create_alarm_mixed_all_skips_contacts_and_proceeds_for_guardian(hass: HomeAssistant, caplog) -> None:
-    # With the special `all` target on a mixed account, the Guardian watch proceeds and the Contact
-    # watch is skipped with a warning -- no error is raised.
-    coord = _install(hass)
-    coord.controller.getWatchUserIDs.return_value = ["watch-guardian", "watch-contact"]
+async def test_create_alarm_mixed_selection_skips_contacts_and_proceeds_for_guardian(hass: HomeAssistant, caplog) -> None:
+    # Selecting a Guardian watch AND a Contact watch on one account: the Guardian watch proceeds and
+    # the Contact watch is skipped with a warning -- no error is raised.
+    coord = _install(hass, wuids=("watch-guardian", "watch-contact"))
     coord.is_confirmed_contact = MagicMock(side_effect=lambda wuid: wuid == "watch-contact")
-    coord.data = {"watch-guardian": {"alarm": [], "silent": []}, "watch-contact": {"alarm": [], "silent": []}}
     coord.controller.addAlarmTime = AsyncMock(return_value=True)
     coord.controller.getWatchAlarm = AsyncMock(return_value=[])
 
     with caplog.at_level(logging.WARNING):
-        await XploraAlarmService(hass, ENTRY_ID).async_create(
-            **{
-                "kwargs": {
-                    ATTR_SERVICE_TARGET: ["all"],
-                    ATTR_SERVICE_USER: [f"{ENTRY_ID} (parent)"],
-                    ATTR_SERVICE_START: "08:00",
-                    ATTR_SERVICE_WEEKDAYS: ["mon"],
-                    ATTR_SERVICE_NAME: "",
-                }
-            }
+        await _service(hass, coord, XploraAlarmService).async_create(
+            **_kwargs(
+                coord,
+                wuids=("watch-guardian", "watch-contact"),
+                **{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""},
+            )
         )
 
     coord.controller.addAlarmTime.assert_awaited_once()  # only the Guardian watch
@@ -384,22 +400,17 @@ async def test_create_alarm_mixed_all_skips_contacts_and_proceeds_for_guardian(h
 
 async def test_create_alarm_all_contacts_raises_and_sends_nothing(hass: HomeAssistant) -> None:
     # The account guards NONE of the targeted watches -> the error is raised and no mutation is sent.
-    coord = _install(hass)
-    coord.controller.getWatchUserIDs.return_value = ["contact-1", "contact-2"]
+    coord = _install(hass, wuids=("contact-1", "contact-2"))
     coord.is_confirmed_contact = MagicMock(return_value=True)
     coord.controller.addAlarmTime = AsyncMock(return_value=True)
 
     with pytest.raises(ServiceValidationError):
-        await XploraAlarmService(hass, ENTRY_ID).async_create(
-            **{
-                "kwargs": {
-                    ATTR_SERVICE_TARGET: ["all"],
-                    ATTR_SERVICE_USER: [f"{ENTRY_ID} (parent)"],
-                    ATTR_SERVICE_START: "08:00",
-                    ATTR_SERVICE_WEEKDAYS: ["mon"],
-                    ATTR_SERVICE_NAME: "",
-                }
-            }
+        await _service(hass, coord, XploraAlarmService).async_create(
+            **_kwargs(
+                coord,
+                wuids=("contact-1", "contact-2"),
+                **{ATTR_SERVICE_START: "08:00", ATTR_SERVICE_WEEKDAYS: ["mon"], ATTR_SERVICE_NAME: ""},
+            )
         )
 
     coord.controller.addAlarmTime.assert_not_awaited()

@@ -263,10 +263,9 @@ class XploraWatchCard extends HTMLElement {
   }
 
   _base() {
-    // The CRUD services resolve the config entry from `user` and the watch from `target`; the
-    // sensor surfaces both so the card needs no extra configuration.
-    const a = (this._stateObj() || {}).attributes || {};
-    return { target: [a.wuid], user: [a.entry_id] };
+    // Services target HA devices; the card targets the watch by the entity it is bound to (the CRUD
+    // handlers resolve `entity_id` -> its device -> the (account, watch)). No extra config needed.
+    return { entity_id: [this._config.entity] };
   }
 
   _locale() {
@@ -344,7 +343,7 @@ class XploraWatchCard extends HTMLElement {
   async _refreshNow() {
     if (!this._hass || this._refreshing) return;
     const base = this._base();
-    if (!base.target[0] || !base.user[0]) return; // sensor not ready yet
+    if (!base.entity_id[0]) return; // sensor not ready yet
     this._refreshing = true;
     markRefreshed(this._refreshKey());
     if (this._mode === "list") this._render();
@@ -367,7 +366,7 @@ class XploraWatchCard extends HTMLElement {
     this._autoRefreshDone = true;
     if (!refreshOnRenderEnabled(s)) return;
     const base = this._base();
-    if (!base.target[0] || !base.user[0]) return;
+    if (!base.entity_id[0]) return;
     fireDeduped(this._refreshKey(), () => this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, base, undefined, false));
   }
 
@@ -406,7 +405,7 @@ class XploraWatchCard extends HTMLElement {
   }
 
   // Enable/disable every alarm or silent on this watch in one call (header bulk buttons). Reuses
-  // `_callService`, which merges `_base()` (user/target) and re-renders on success/failure.
+  // `_callService`, which merges `_base()` (the device target) and re-renders on success/failure.
   _callBulk(enabled) {
     const silent = this._kind() === "silent";
     const svc = enabled
@@ -424,15 +423,15 @@ class XploraWatchCard extends HTMLElement {
   // `name`, silents carry an `end`.
   _buildPayloadJson(entry) {
     const base = this._base();
-    const data = { user: base.user, target: base.target, start: entry.start, weekdays: entry.weekdays || [] };
+    const data = { entity_id: base.entity_id, start: entry.start, weekdays: entry.weekdays || [] };
     if (this._kind() === "silent") data.end = entry.end;
     else if (entry.name) data.name = entry.name;
     return JSON.stringify(data, null, 2);
   }
 
   // A complete, paste-ready `set_alarm_enabled` / `set_silent_enabled` automation `action:` block
-  // with this entry's id and current state pre-filled. Removes the user/target-convention footgun:
-  // the `user` value must stay the `"<entry_id> (<username>)"` token the services parse. Hand-rolled
+  // with this entry's id and current state pre-filled. Services target HA devices, so the call
+  // targets the watch by the card's bound entity (the handler resolves it to the device). Hand-rolled
   // YAML (no YAML lib in the card); `q()` double-quotes scalars safely via JSON string encoding.
   _buildServiceCallYaml(entry) {
     const base = this._base();
@@ -443,11 +442,10 @@ class XploraWatchCard extends HTMLElement {
     const q = (v) => JSON.stringify(v == null ? "" : String(v));
     return [
       `action: ${DOMAIN}.${svc}`,
+      `target:`,
+      `  entity_id:`,
+      `    - ${q(base.entity_id[0])}`,
       `data:`,
-      `  user:`,
-      `    - ${q(base.user[0])}`,
-      `  target:`,
-      `    - ${q(base.target[0])}`,
       `  ${idKey}: ${q(entry.id)}`,
       `  enabled: ${enabled}`,
     ].join("\n");
@@ -1856,10 +1854,11 @@ class XploraWatchOverviewCard extends HTMLElement {
     const a = ((this._hass && this._hass.states[entityId]) || {}).attributes || {};
     if (!a.wuid || !a.entry_id) return;
     // Record the dedup window so a co-rendered card's "refresh on render" doesn't immediately
-    // re-fire the same call (this explicit tap always fires).
+    // re-fire the same call (this explicit tap always fires). The service targets the watch by the
+    // list entity (resolved to its device server-side).
     markRefreshed(`${SERVICE.REFRESH_FUNCTIONS}|${a.entry_id}|${a.wuid}`);
     Promise.resolve(
-      this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, { target: [a.wuid], user: [a.entry_id] })
+      this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, { entity_id: [entityId] })
     ).catch((err) => console.error("xplora-watch-overview-card: refresh_functions failed", err));
   }
 
@@ -1877,7 +1876,7 @@ class XploraWatchOverviewCard extends HTMLElement {
       const a = (this._hass.states[listEntity] || {}).attributes || {};
       if (a.wuid && a.entry_id) {
         fireDeduped(`${SERVICE.REFRESH_FUNCTIONS}|${a.entry_id}|${a.wuid}`, () =>
-          this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, { target: [a.wuid], user: [a.entry_id] }, undefined, false)
+          this._hass.callService(DOMAIN, SERVICE.REFRESH_FUNCTIONS, { entity_id: [listEntity] }, undefined, false)
         );
       }
     }
@@ -2710,9 +2709,10 @@ window.customCards.push({
  * after a read/refresh has downloaded them, so the card triggers one automatically when it first
  * opens with no cached messages.
  *
- * Driven services (Python side `const.ATTR_SERVICE_*`):
- *   - `send_message` (compose box) — { message, target:[wuid], user:[entry_id] }
- *   - `read_message` (refresh)     — { target:[wuid], user:[entry_id] }
+ * Driven services (Python side `const.ATTR_SERVICE_*`); the watch is targeted by the card's bound
+ * entity (resolved to its device server-side):
+ *   - `send_message` (compose box) — { message, entity_id:[<bound entity>] }
+ *   - `read_message` (refresh)     — { entity_id:[<bound entity>] }
  *
  * Config:
  *   type: custom:xplora-watch-chat-card
@@ -2868,10 +2868,9 @@ class XploraWatchChatCard extends HTMLElement {
   }
 
   _base() {
-    // The message services resolve the config entry from `user` and the watch from `target`; the
-    // sensor surfaces both so the card needs no extra configuration.
-    const a = this._attrs();
-    return { target: [a.wuid], user: [a.entry_id] };
+    // Message services target HA devices; the card targets the watch by its bound message entity
+    // (the handler resolves `entity_id` -> its device -> the (account, watch)).
+    return { entity_id: [this._config.entity] };
   }
 
   // Chat entries sorted oldest -> newest. Each is a `SimpleChat` dict (see pyxplora_api/model.py).

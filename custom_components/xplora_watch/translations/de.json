@@ -9,6 +9,9 @@
   "exceptions": {
     "not_guardian": {
       "message": "Dieses Konto ist nicht der Administrator dieser Uhr und kann daher folgende Aktion nicht ausführen: „{action}“."
+    },
+    "no_xplora_device": {
+      "message": "Wähle mindestens ein Xplora®-Uhrengerät für diese Aktion aus."
     }
   },
   "config": {

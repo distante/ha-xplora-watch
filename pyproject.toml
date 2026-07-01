@@ -98,7 +98,6 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-    "aiofiles.*",
     "geopy.*",
 ]
 ignore_missing_imports = true

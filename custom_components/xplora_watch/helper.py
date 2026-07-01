@@ -4,45 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import logging
 import os
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import aiofiles
 import aiohttp
 from geopy import distance
 from homeassistant.components.ffmpeg import get_ffmpeg_manager
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util.yaml.dumper import dump
-from homeassistant.util.yaml.loader import JSON_TYPE, Secrets, parse_yaml
 
-from .config import resolve_language
 from .const import (
-    ATTR_SERVICE_CREATE_ALARM,
-    ATTR_SERVICE_CREATE_SILENT,
-    ATTR_SERVICE_DELETE_ALARM,
-    ATTR_SERVICE_DELETE_MSG,
-    ATTR_SERVICE_DELETE_SILENT,
-    ATTR_SERVICE_LOGOUT,
-    ATTR_SERVICE_READ_MSG,
-    ATTR_SERVICE_REBOOT,
-    ATTR_SERVICE_REFRESH_FUNCTIONS,
-    ATTR_SERVICE_SEE,
-    ATTR_SERVICE_SEND_MSG,
-    ATTR_SERVICE_SET_ALARM_ENABLED,
-    ATTR_SERVICE_SET_SILENT_ENABLED,
-    ATTR_SERVICE_SHUTDOWN,
-    ATTR_SERVICE_TURN_ALL_ALARMS_OFF,
-    ATTR_SERVICE_TURN_ALL_ALARMS_ON,
-    ATTR_SERVICE_TURN_ALL_SILENTS_OFF,
-    ATTR_SERVICE_TURN_ALL_SILENTS_ON,
-    ATTR_SERVICE_UPDATE_ALARM,
-    ATTR_SERVICE_UPDATE_SILENT,
     DATA_FRONTEND_REGISTERED,
     DATA_MEDIA_PATHS_REGISTERED,
     DAYS,
@@ -53,7 +26,6 @@ from .const import (
     HOME,
     WEEKDAY_KEYS,
 )
-from .coordinator import XploraDataUpdateCoordinator
 
 if TYPE_CHECKING:
     from .pyxplora_api.pyxplora_api_async import PyXploraApi
@@ -389,162 +361,3 @@ async def create_www_directory(hass: HomeAssistant) -> None:
         # Already registered (e.g. by a reload after the routes outlived the unload). Harmless.
         _LOGGER.debug("Media static paths already registered (%s)", err)
     domain_data[DATA_MEDIA_PATHS_REGISTERED] = True
-
-
-async def load_yaml(fname: str | os.PathLike[str], secrets: Secrets | None = None) -> JSON_TYPE | None:
-    """Load a YAML file."""
-    try:
-        async with aiofiles.open(fname, encoding="utf-8") as conf_file:
-            contents = await conf_file.read()
-            return parse_yaml(contents, secrets)
-    except UnicodeDecodeError as exc:
-        _LOGGER.error("Unable to read file %s: %s", fname, exc)
-        raise HomeAssistantError(exc) from exc
-
-
-async def save_yaml(path: str, data: dict) -> None:
-    """Save YAML to a file."""
-    # Dump before writing to not truncate the file if dumping fails
-    str_data = dump(data)
-    async with aiofiles.open(path, "w", encoding="utf-8") as outfile:
-        await outfile.write(str_data)
-
-
-async def create_service_yaml_file(hass: HomeAssistant, entry: ConfigEntry, watches: list[str]) -> None:
-    """Create a service.yaml file."""
-
-    # Locate bundled package data relative to this module rather than via `hass.config.path()`:
-    # in a HACS install the integration lives under `config/custom_components/xplora_watch/`, so
-    # the two resolve identically -- but in the dev layout the package is loaded from the repo
-    # root via PYTHONPATH while the HA config dir is `config/` (which has no `custom_components/`),
-    # so `hass.config.path("custom_components/...")` points at a non-existent path and the read
-    # below raises FileNotFoundError. `__file__` is correct in both layouts, and is also where HA
-    # reads `services.yaml` back from when registering the service UI.
-    package_dir = os.path.dirname(__file__)
-    path = os.path.join(package_dir, "services.yaml")
-    _LOGGER.debug("set services.yaml path: %s", path)
-
-    language = resolve_language(entry)
-    path_json = os.path.join(package_dir, "jsons", f"service_{language}.json")
-    _LOGGER.debug("services_%s.json path: %s", language, path_json)
-    try:
-        async with aiofiles.open(path_json, encoding="utf8") as json_file:
-            contents = await json_file.read()
-            configuration: dict[str, Any] = json.loads(contents)
-
-        # `services.yaml` is gitignored (it gets overwritten with real account data on every
-        # setup), so a fresh install/checkout won't have it yet -- treat a missing file the same
-        # as the "no previous data" case rather than letting load_yaml's FileNotFoundError fall
-        # through to the blanket `except OSError` below and abort before writing anything.
-        yaml_service = await load_yaml(path) if os.path.exists(path) else None
-        if (
-            isinstance(yaml_service, dict)
-            and yaml_service.get("see", {})
-            and yaml_service.get("see", {}).get("fields", None)
-            and yaml_service.get("see", {}).get("fields", {}).get("user", None)
-        ):
-            configuration = yaml_service
-
-        coordinator: XploraDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-        username = coordinator.controller.getUserName()
-
-        # The `user` selector value must stay `"<entry_id> (<username>)"` because the services
-        # parse the entry id back out of it (see `services.py`), but the dropdown should only
-        # show the username.
-        user_value = f"{entry.entry_id} ({username})"
-
-        def user_label(value: str) -> str:
-            """Friendly label for a user option: the username inside `"<entry_id> (<username>)"`."""
-            start, end = value.find("("), value.rfind(")")
-            return value[start + 1 : end] if -1 < start < end else value
-
-        def normalize_options(options: list[Any], label_of: Callable[[str], str]) -> dict[str, str]:
-            """Build a value->label map from existing options (plain strings or {value,label} dicts)."""
-            normalized: dict[str, str] = {}
-            for opt in options:
-                if isinstance(opt, dict):
-                    value: str = opt["value"]
-                    normalized[value] = opt.get("label", value)
-                else:
-                    normalized[opt] = label_of(opt)
-            return normalized
-
-        def select_options(field: dict[str, Any]) -> list[Any]:
-            """Existing options of a field's select selector; [] if it isn't a select selector yet.
-
-            Old or hand-written `services.yaml` files (and the shipped stub) may declare `user` as a
-            plain `text` selector with no `select` key. Reading defensively -- and always writing the
-            selector back as a `select` below -- converts those into the dropdown we expect instead
-            of raising KeyError.
-            """
-            return ((field.get("selector") or {}).get("select") or {}).get("options") or []
-
-        def set_watches(configurations: dict[str, Any], names: list[str], watches: list[str]) -> dict[str, Any]:
-            """Set the watches for the configuration."""
-            for name in names:
-                # Be defensive: a language template missing one of the named services should not
-                # abort the whole merge -- just skip it (the production templates carry them all).
-                if name not in configurations:
-                    continue
-                fields: dict[str, Any] = configurations[name]["fields"]
-                # Account-level services (e.g. `logout`) have only a `user` selector and no
-                # per-watch `target` -- skip the target merge for those.
-                if "target" in fields:
-                    # Show the child's name in the dropdown while keeping the watch id as the
-                    # submitted value (the services consume `target` directly as the wuid).
-                    # Normalize whatever is already there -- the template's plain `"all"` string,
-                    # or {value,label} dicts written by an earlier run / another config entry --
-                    # into a value->label map so watches accumulate across entries, deduped by id.
-                    target_options = normalize_options(select_options(fields["target"]), lambda v: v)
-                    for wuid in watches:
-                        target_options[wuid] = watch_user_label(coordinator.controller, wuid)
-                    fields["target"]["selector"] = {
-                        "select": {
-                            "options": [{"value": value, "label": label} for value, label in sorted(target_options.items(), reverse=True)]
-                        }
-                    }
-
-                # Same idea for the user selector: keep other entries' users, drop any stale
-                # entry for this username, then (re)add this account -- all as {value,label} dicts
-                # so the dropdown shows just the username.
-                user_options = normalize_options(select_options(fields["user"]), user_label)
-                user_options = {value: label for value, label in user_options.items() if username not in value}
-                user_options[user_value] = username
-                fields["user"]["selector"] = {
-                    "select": {"options": [{"value": value, "label": label} for value, label in sorted(user_options.items())]}
-                }
-            return configurations
-
-        configuration = set_watches(
-            configuration,
-            [
-                ATTR_SERVICE_SEND_MSG,
-                ATTR_SERVICE_SEE,
-                ATTR_SERVICE_REFRESH_FUNCTIONS,
-                ATTR_SERVICE_READ_MSG,
-                ATTR_SERVICE_SHUTDOWN,
-                ATTR_SERVICE_REBOOT,
-                ATTR_SERVICE_LOGOUT,
-                ATTR_SERVICE_DELETE_MSG,
-                ATTR_SERVICE_CREATE_ALARM,
-                ATTR_SERVICE_UPDATE_ALARM,
-                ATTR_SERVICE_DELETE_ALARM,
-                ATTR_SERVICE_SET_ALARM_ENABLED,
-                ATTR_SERVICE_CREATE_SILENT,
-                ATTR_SERVICE_UPDATE_SILENT,
-                ATTR_SERVICE_DELETE_SILENT,
-                ATTR_SERVICE_SET_SILENT_ENABLED,
-                ATTR_SERVICE_TURN_ALL_ALARMS_ON,
-                ATTR_SERVICE_TURN_ALL_ALARMS_OFF,
-                ATTR_SERVICE_TURN_ALL_SILENTS_ON,
-                ATTR_SERVICE_TURN_ALL_SILENTS_OFF,
-            ],
-            watches,
-        )
-
-        await save_yaml(path, configuration)
-
-    except OSError:
-        _LOGGER.exception("Error writing service definition to path '%s'", path)
-    except KeyError as error:
-        _LOGGER.exception("Key '%s' from service.yaml not found", error)

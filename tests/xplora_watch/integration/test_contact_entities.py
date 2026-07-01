@@ -46,15 +46,11 @@ GUARDIAN_ONLY_ENTITY_IDS = {
 
 
 def _patch_fs_helpers():
-    return (
-        patch("custom_components.xplora_watch.create_www_directory", new=AsyncMock()),
-        patch("custom_components.xplora_watch.create_service_yaml_file", new=AsyncMock()),
-    )
+    return patch("custom_components.xplora_watch.create_www_directory", new=AsyncMock())
 
 
 async def _setup_and_collect_entity_ids(hass: HomeAssistant, entry: MockConfigEntry) -> set[str]:
-    patch_www, patch_yaml = _patch_fs_helpers()
-    with patch_www, patch_yaml:
+    with _patch_fs_helpers():
         result = await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 

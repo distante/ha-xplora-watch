@@ -1,9 +1,19 @@
-# Static service descriptions for hassfest/HACS validation. The integration regenerates this
-# file at runtime with the real per-watch target/user dropdown options
-# (helper.create_service_yaml_file); do not hand-edit the generated values.
+# Static service descriptions. Each service is targeted at the Xplora® watch device(s) via an
+# inline `device_id` field whose `device` selector is filtered to `integration: xplora_watch`,
+# so the action form shows a watch-only chooser (ADR 0003). The handler resolves the picked
+# device(s) -> (account, watch); it also accepts `entity_id` (used by the bundled Lovelace card)
+# and `area_id`. This file carries no per-account watch ids / usernames and is not regenerated.
 create_alarm:
   description: Create a new alarm on the watch.
   fields:
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: &id001
+        device:
+          integration: xplora_watch
+          multiple: true
     name:
       description: Optional alarm label.
       name: Name
@@ -16,21 +26,6 @@ create_alarm:
       required: true
       selector:
         time: null
-    target:
-      description: Choose the watch(es) to apply this to.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
     weekdays:
       description: Days of the week the entry repeats on.
       name: Repeat days
@@ -57,6 +52,11 @@ create_alarm:
 create_silent:
   description: Create a new silent-time window on the watch.
   fields:
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: *id001
     end:
       description: End time (HH:MM).
       name: End
@@ -69,21 +69,6 @@ create_silent:
       required: true
       selector:
         time: null
-    target:
-      description: Choose the watch(es) to apply this to.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
     weekdays:
       description: Days of the week the entry repeats on.
       name: Repeat days
@@ -116,218 +101,123 @@ delete_alarm:
       required: true
       selector:
         text: null
-    target:
-      description: Choose the watch(es) to apply this to.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Delete alarm
 delete_message_from_app:
   description: Delete message in the Xplora® app.
   fields:
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: *id001
     message_id:
-      description: Enter the message ID to be deleted in the app; does not affect
-        messages on the watch.
+      description: Enter the message ID to be deleted in the app; does not affect messages on the watch.
       name: Message ID
       required: true
       selector:
         text: null
-    target:
-      description: Choose your watch where the message should be deleted.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the user who should delete the message on the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
   name: Delete Message
 delete_silent:
   description: Delete a silent-time window from the watch.
   fields:
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: *id001
     silent_id:
       description: The id of the silent-time window (see the silents sensor attributes).
       name: Silent ID
       required: true
       selector:
         text: null
-    target:
-      description: Choose the watch(es) to apply this to.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
   name: Delete silent time
 fetch_history:
-  description: 'Fetch and cache a past day''s location history (default: yesterday).
-    The watch only serves the last few days, so automate this daily to keep a longer
-    history in Home Assistant.'
+  description: 'Fetch and cache a past day''s location history (default: yesterday). The watch only serves
+    the last few days, so automate this daily to keep a longer history in Home Assistant.'
   fields:
     date:
-      description: Day to fetch as YYYY-MM-DD. Defaults to yesterday. Only the last
-        few days are available from the watch.
+      description: Day to fetch as YYYY-MM-DD. Defaults to yesterday. Only the last few days are available
+        from the watch.
       name: Date
       required: false
       selector:
         text: null
-    target:
-      description: Choose your watch.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Fetch location history (day)
 logout:
-  description: 'Log out the account: invalidate the current session token on Xplora''s
-    servers and force a fresh login on the next update.'
+  description: 'Log out the account: invalidate the current session token on Xplora''s servers and force
+    a fresh login on the next update.'
   fields:
-    user:
-      description: Select the account to log out.
-      name: User
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
       required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Log Out
 read_message:
   description: Read messages from the watch.
   fields:
-    target:
-      description: Choose your watch from which to retrieve the message.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the user from whom the messages should be read.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Read Messages
 reboot:
   description: Reboot the watch.
   fields:
-    target:
-      description: Choose your watch to be rebooted.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the user who should reboot the watch (for admins only).
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Reboot Watch
 refresh_functions:
-  description: Refresh alarms, silent times and safe zones from your watch on demand
-    (these have a separate, default-off poll interval).
+  description: Refresh alarms, silent times and safe zones from your watch on demand (these have a separate,
+    default-off poll interval).
   fields:
-    target:
-      description: Choose your watch to refresh.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the user who should trigger the refresh.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Refresh alarms/silents/safe zones
 see:
-  description: 'Manually refresh the watch''s live status: location, battery, charging,
-    online status and steps (the data from the watch''s device list). Other data has
-    its own services and is not refreshed here: chat messages via read_message, and
-    location-history archiving via fetch_history. Alarms, silent times and safe zones
-    refresh on their own interval or on demand via refresh_functions.'
+  description: 'Manually refresh the watch''s live status: location, battery, charging, online status
+    and steps (the data from the watch''s device list). Other data has its own services and is not refreshed
+    here: chat messages via read_message, and location-history archiving via fetch_history. Alarms, silent
+    times and safe zones refresh on their own interval or on demand via refresh_functions.'
   fields:
-    target:
-      description: Choose your watch to update the data.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the user who should trigger the tracking.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Track Watch
 send_message:
   description: Send a notification.
   fields:
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: *id001
     message:
       description: Notification text of the message.
       name: Message
       required: true
       selector:
         text: null
-    target:
-      description: Choose your watch to send the message to.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the user who should receive the message on the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
   name: Send Message
 set_alarm_enabled:
   description: Enable or disable an alarm.
@@ -338,31 +228,26 @@ set_alarm_enabled:
       required: true
       selector:
         text: null
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: *id001
     enabled:
       description: Enable (on) or disable (off) the entry.
       name: Enabled
       required: true
       selector:
         boolean: null
-    target:
-      description: Choose the watch(es) to apply this to.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
   name: Enable/disable alarm
 set_silent_enabled:
   description: Enable or disable a silent-time window.
   fields:
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: *id001
     enabled:
       description: Enable (on) or disable (off) the entry.
       name: Enabled
@@ -375,116 +260,51 @@ set_silent_enabled:
       required: true
       selector:
         text: null
-    target:
-      description: Choose the watch(es) to apply this to.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
   name: Enable/disable silent time
 shutdown:
   description: Power down the watch.
   fields:
-    target:
-      description: Choose your watch to be turned off.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the user who should power off the watch (for admins only).
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Shut Down Watch
 turn_all_alarms_off:
   description: Disable all alarms on the watch(es).
   fields:
-    target:
-      description: Choose the watch(es) to apply this to.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Disable all alarms
 turn_all_alarms_on:
   description: Enable all alarms on the watch(es).
   fields:
-    target:
-      description: Choose the watch(es) to apply this to.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Enable all alarms
 turn_all_silents_off:
   description: Disable all silent-time windows on the watch(es).
   fields:
-    target:
-      description: Choose the watch(es) to apply this to.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Disable all silent times
 turn_all_silents_on:
   description: Enable all silent-time windows on the watch(es).
   fields:
-    target:
-      description: Choose the watch(es) to apply this to.
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
       name: Watch(es)
       required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
+      selector: *id001
   name: Enable all silent times
 update_alarm:
   description: Modify an existing alarm's time, repeat days and/or name.
@@ -495,6 +315,11 @@ update_alarm:
       required: true
       selector:
         text: null
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: *id001
     name:
       description: Optional alarm label.
       name: Name
@@ -507,21 +332,6 @@ update_alarm:
       required: false
       selector:
         time: null
-    target:
-      description: Choose the watch(es) to apply this to.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
     weekdays:
       description: Days of the week the entry repeats on.
       name: Repeat days
@@ -548,6 +358,11 @@ update_alarm:
 update_silent:
   description: Modify an existing silent-time window's start, end and/or repeat days.
   fields:
+    device_id:
+      description: The Xplora® watch(es) this action applies to.
+      name: Watch(es)
+      required: true
+      selector: *id001
     end:
       description: End time (HH:MM).
       name: End
@@ -566,21 +381,6 @@ update_silent:
       required: false
       selector:
         time: null
-    target:
-      description: Choose the watch(es) to apply this to.
-      name: Watch(es)
-      required: true
-      selector:
-        select:
-          options:
-          - all
-    user:
-      description: Select the account that owns the watch.
-      name: User
-      required: true
-      selector:
-        select:
-          options: []
     weekdays:
       description: Days of the week the entry repeats on.
       name: Repeat days

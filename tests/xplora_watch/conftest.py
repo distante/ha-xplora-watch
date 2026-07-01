@@ -46,6 +46,7 @@ from custom_components.xplora_watch.const import (
 )
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
 from custom_components.xplora_watch.pyxplora_api.const import ENDPOINT
+from custom_components.xplora_watch.services import async_setup_services
 
 from .fixtures.graphql_payloads import DEFAULT_OPERATION_PAYLOADS, DEFAULT_WUID
 from .fixtures.rest_payloads import (
@@ -236,3 +237,30 @@ async def coordinator_with_data(coordinator: XploraDataUpdateCoordinator) -> Xpl
     """``coordinator`` after a full data refresh, for entity/platform/service tests."""
     await coordinator.async_update_xplora_data()
     return coordinator
+
+
+async def setup_service_target(
+    hass: HomeAssistant,
+    coordinator: XploraDataUpdateCoordinator,
+    wuids: tuple[str, ...] = (DEFAULT_WUID,),
+) -> dict[str, str]:
+    """Register the coordinator + the integration's services and create one HA device per watch.
+
+    Mirrors production: each account's copy of a watch is its own device, identified by
+    ``(DOMAIN, "{entry.unique_id}_{wuid}")`` and owned by the account's config entry. Returns a
+    ``{wuid: device_id}`` map; tests then drive the real service via
+    ``hass.services.async_call(DOMAIN, service, {"device_id": [device_id], ...}, blocking=True)``.
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    entry_id = coordinator._entry.entry_id
+    hass.data.setdefault(DOMAIN, {})[entry_id] = coordinator
+    await async_setup_services(hass, entry_id)
+    registry = dr.async_get(hass)
+    return {
+        wuid: registry.async_get_or_create(
+            config_entry_id=entry_id,
+            identifiers={(DOMAIN, f"{coordinator._entry.unique_id}_{wuid}")},
+        ).id
+        for wuid in wuids
+    }

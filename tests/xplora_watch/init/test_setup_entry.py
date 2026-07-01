@@ -13,19 +13,15 @@ from tests.xplora_watch.fixtures.graphql_payloads import DEFAULT_USER_ID, make_d
 
 
 def _patch_fs_helpers():
-    """Patch the filesystem helper functions imported by reference into __init__.py."""
-    return (
-        patch("custom_components.xplora_watch.create_www_directory", new=AsyncMock()),
-        patch("custom_components.xplora_watch.create_service_yaml_file", new=AsyncMock()),
-    )
+    """Patch the filesystem helper imported by reference into __init__.py."""
+    return patch("custom_components.xplora_watch.create_www_directory", new=AsyncMock())
 
 
 async def test_setup_entry_happy_path(hass, mock_config_entry_phone: MockConfigEntry, mock_graphql, mock_geocoding_openstreetmap) -> None:
     """async_setup_entry sets up the coordinator, stores it, and forwards platforms."""
-    patch_www, patch_yaml = _patch_fs_helpers()
+    patch_www = _patch_fs_helpers()
     with (
         patch_www,
-        patch_yaml,
         patch.object(hass.config_entries, "async_forward_entry_setups", new=AsyncMock()) as mock_forward,
     ):
         result = await hass.config_entries.async_setup(mock_config_entry_phone.entry_id)
@@ -62,10 +58,9 @@ async def test_setup_entry_non_admin_watch_logs_info_and_still_succeeds(
     # is_admin is derived from the deviceList item's guardianType (no Contacts call).
     graphql_operations["deviceList"] = {"data": make_device_list_payload(guardian_type="SECOND")}
 
-    patch_www, patch_yaml = _patch_fs_helpers()
+    patch_www = _patch_fs_helpers()
     with (
         patch_www,
-        patch_yaml,
         patch.object(hass.config_entries, "async_forward_entry_setups", new=AsyncMock()),
         caplog.at_level(logging.INFO),
     ):

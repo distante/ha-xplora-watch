@@ -9,6 +9,9 @@
   "exceptions": {
     "not_guardian": {
       "message": "This account is not this watch's primary guardian, so it cannot {action}."
+    },
+    "no_xplora_device": {
+      "message": "Select at least one Xplora® watch device for this action."
     }
   },
   "config": {

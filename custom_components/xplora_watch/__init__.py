@@ -17,7 +17,7 @@ from homeassistant.util import slugify
 from .config import resolve_account_alias
 from .const import ATTR_WATCH, DATA_HASS_CONFIG, DOMAIN, GUARDIAN_ONLY_KEYS
 from .coordinator import XploraDataUpdateCoordinator
-from .helper import account_token, async_register_frontend_card, create_service_yaml_file, create_www_directory
+from .helper import account_token, async_register_frontend_card, create_www_directory
 from .services import async_setup_services, async_unload_services
 from .websocket import async_register_websocket_commands
 
@@ -98,12 +98,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # The Lovelace card is registered in async_setup (component load) so it is available before this
     # network-gated entry setup runs -- see the note there. (async_register_frontend_card is
     # idempotent, so a missed async_setup would still be covered, but the early call is the point.)
-    # Reuse `wuids` (the watch id list from `getWatchUserIDs()` above): the first refresh
-    # already issued the account-wide `deviceList` fetch and populated the status cache, and
-    # the service file only needs the ids. Calling `setDevices()` again here would fire a
-    # second redundant `deviceList` request at every setup -- exactly the rate-limit-sensitive
-    # traffic this integration exists to minimize.
-    await create_service_yaml_file(hass, entry, wuids)
+    # `services.yaml` is now a static, device-targeted file (ADR 0003): services target HA devices,
+    # so there is no per-setup regeneration that would write account names / watch ids to disk.
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

@@ -1,4 +1,4 @@
-"""Tests for XploraRebootService.async_reboot (ISSUE-14: parity with the app's reboot service)."""
+"""Tests for the ``reboot`` service (parity with the app's reboot mutation), via device targeting."""
 
 from __future__ import annotations
 
@@ -8,24 +8,18 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
-from custom_components.xplora_watch.const import DOMAIN
+from custom_components.xplora_watch.const import ATTR_SERVICE_REBOOT, DOMAIN
 from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinator
-from custom_components.xplora_watch.services import XploraRebootService
 from tests.xplora_watch.fixtures.graphql_payloads import DEFAULT_WUID
 
-
-def _register_coordinator(hass: HomeAssistant, coordinator: XploraDataUpdateCoordinator) -> str:
-    entry_id = coordinator._entry.entry_id
-    hass.data.setdefault(DOMAIN, {})[entry_id] = coordinator
-    return entry_id
+from ..conftest import setup_service_target
 
 
 async def test_reboot_admin_watch_succeeds(hass: HomeAssistant, coordinator: XploraDataUpdateCoordinator, caplog) -> None:
-    entry_id = _register_coordinator(hass, coordinator)
-    reboot_service = XploraRebootService(hass, entry_id)
+    devices = await setup_service_target(hass, coordinator)
 
     with caplog.at_level(logging.DEBUG):
-        await reboot_service.async_reboot([DEFAULT_WUID], kwargs={"user": [f"{entry_id} (testuser)"]})
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_REBOOT, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
     assert "Reboot failed" not in caplog.text
     assert "Reboot result: True" in caplog.text
@@ -42,11 +36,10 @@ async def test_reboot_contact_watch_is_blocked(
     # (This reverses the old ref:XW-007 "non-primary guardian still succeeds" behavior; the chat half
     # of ref:XW-007 still holds.)
     coordinator.is_admin = {DEFAULT_WUID: False}
-    entry_id = _register_coordinator(hass, coordinator)
-    reboot_service = XploraRebootService(hass, entry_id)
+    devices = await setup_service_target(hass, coordinator)
 
     with caplog.at_level(logging.DEBUG), pytest.raises(ServiceValidationError) as err:
-        await reboot_service.async_reboot([DEFAULT_WUID], kwargs={"user": [f"{entry_id} (testuser)"]})
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_REBOOT, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
     # Localized client-policy error, not a server rejection: a translation key + an {action} that
     # names what was blocked.
@@ -68,22 +61,21 @@ async def test_reboot_auth_error_logs_clean_after_bounded_recovery(
     # and return, NOT propagate a raw traceback. (The old "services never re-login" stance was
     # superseded by centralization -- the single-flight gate makes the re-login storm-safe.)
     graphql_operations["reboot"] = {"errors": [{"code": "E000004"}], "data": {"reboot": None}}
-    entry_id = _register_coordinator(hass, coordinator)
-    reboot_service = XploraRebootService(hass, entry_id)
+    devices = await setup_service_target(hass, coordinator)
 
     with caplog.at_level(logging.DEBUG):
-        await reboot_service.async_reboot([DEFAULT_WUID], kwargs={"user": [f"{entry_id} (testuser)"]})
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_REBOOT, {"device_id": [devices[DEFAULT_WUID]]}, blocking=True)
 
     assert "session token expired" in caplog.text
     assert "Reboot failed" not in caplog.text
     assert "Reboot result" not in caplog.text  # AuthError raised before the result is logged
 
 
-async def test_non_list_targets_logs_warning_and_skips(hass: HomeAssistant, coordinator: XploraDataUpdateCoordinator, caplog) -> None:
-    entry_id = _register_coordinator(hass, coordinator)
-    reboot_service = XploraRebootService(hass, entry_id)
+async def test_reboot_without_xplora_device_raises(hass: HomeAssistant, coordinator: XploraDataUpdateCoordinator, caplog) -> None:
+    # A call that resolves to no Xplora watch is rejected with a clean ServiceValidationError.
+    await setup_service_target(hass, coordinator)
 
-    with caplog.at_level(logging.WARNING):
-        await reboot_service.async_reboot(None, kwargs={"user": [f"{entry_id} (testuser)"]})
+    with caplog.at_level(logging.DEBUG), pytest.raises(ServiceValidationError):
+        await hass.services.async_call(DOMAIN, ATTR_SERVICE_REBOOT, {"device_id": []}, blocking=True)
 
-    assert "No watch ID or type" in caplog.text
+    assert "Reboot result" not in caplog.text

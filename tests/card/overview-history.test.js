@@ -178,7 +178,8 @@ describe("history popup (date bar + calendar popover)", () => {
     el.shadowRoot.querySelector("[data-history]").click();
     const refresh = calls.find((c) => c[1] === "refresh_functions");
     expect(refresh).toBeTruthy();
-    expect(refresh[2]).toMatchObject({ target: ["watch1"], user: ["entry1"] });
+    // Service targets the watch by the tapped list entity (resolved to its device server-side).
+    expect(refresh[2]).toMatchObject({ entity_id: [HIST] });
   });
 
   it("loads a clicked calendar day via the websocket", async () => {

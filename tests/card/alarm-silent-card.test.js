@@ -85,8 +85,8 @@ describe("alarm/silent card — copy menu", () => {
     expect(yaml).toContain("action: xplora_watch.set_alarm_enabled");
     expect(yaml).toContain('alarm_id: "a1"');
     expect(yaml).toContain("enabled: true"); // a1 status is ENABLE
-    expect(yaml).toContain('- "entry1"'); // user / target from _base()
-    expect(yaml).toContain('- "watch1"');
+    expect(yaml).toContain("entity_id:"); // device target via the bound entity (_base())
+    expect(yaml).toContain('- "sensor.watch_alarms"');
   });
 
   it("copy-call uses set_silent_enabled + silent_id for a silent card", () => {
@@ -101,7 +101,7 @@ describe("alarm/silent card — copy menu", () => {
     const el = mount(ALARM_ENTITY, "alarm", ALARMS, []);
     openRowMenu(el, "a1", "copy-payload").click();
     const data = JSON.parse(clip.mock.calls[0][0]);
-    expect(data).toMatchObject({ user: ["entry1"], target: ["watch1"], start: "07:00", weekdays: ["mon", "tue"], name: "School" });
+    expect(data).toMatchObject({ entity_id: ["sensor.watch_alarms"], start: "07:00", weekdays: ["mon", "tue"], name: "School" });
     expect(data.end).toBeUndefined();
   });
 
@@ -130,14 +130,14 @@ describe("alarm/silent card — copy menu", () => {
 });
 
 describe("alarm/silent card — header bulk menu", () => {
-  it("Enable all calls turn_all_alarms_on with base user/target", () => {
+  it("Enable all calls turn_all_alarms_on with the device target (bound entity)", () => {
     const calls = [];
     const el = mount(ALARM_ENTITY, "alarm", ALARMS, calls);
     openBulkMenu(el, "bulk-on").click();
     expect(calls).toContainEqual([
       "xplora_watch",
       "turn_all_alarms_on",
-      { target: ["watch1"], user: ["entry1"] },
+      { entity_id: ["sensor.watch_alarms"] },
       undefined,
       false,
     ]);

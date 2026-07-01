@@ -206,10 +206,9 @@ HA Xplora® Watch should now appear as a card under the HA Integrations page wit
           entity_id: zone.home
           state: "1"   # at least one person home
       action:
-        - service: xplora_watch.see
+        - action: xplora_watch.see
           data:
-            target: ["all"]
-            user: ["<entry_id> (<username>)"]
+            device_id: <your watch device>   # the "Watch(es)" field: pick one or more "Dana Watch (Mom)" devices
   ```
 
 - Existing installs are migrated automatically: a previously configured interval is snapped to
@@ -316,21 +315,19 @@ and the repeat days in three forms: `weekRepeat` (raw 7-char `0`/`1` string, ind
 | `xplora_watch.turn_all_alarms_on` / `..._off`  | Enable or disable **every** alarm on the watch(es) in one call         |
 | `xplora_watch.turn_all_silents_on` / `..._off` | Enable or disable **every** silent-time window on the watch(es) in one call |
 
-Common fields: `target` (the watch) and `user` (the account) are picked from dropdowns in the UI,
-exactly like the other services. Times (`start`, `end`) are `HH:MM`; `weekdays` is a list of
-`mon`,`tue`,`wed`,`thu`,`fri`,`sat`,`sun`. The `turn_all_*` services only need `target` + `user`
+Common targeting: every service has a **Watch(es)** field — a device picker filtered to your Xplora
+watches (e.g. `Dana Watch (Mom)`), so you choose the watch directly; one pick identifies both the
+watch and the account behind it. Times (`start`, `end`) are `HH:MM`; `weekdays` is a list of
+`mon`,`tue`,`wed`,`thu`,`fri`,`sat`,`sun`. The `turn_all_*` services need only the watch
 (they enumerate every entry themselves). The `alarm_id` / `silent_id` for updates and deletes come
 from the matching sensor's attributes — or, more easily, from the **copy buttons on the dashboard
 card** (see below), which hand you the id or a complete, ready-to-paste service call.
 
 ```yaml
 # Create a school-night silent window, 22:00–07:00, Mon–Fri
-service: xplora_watch.create_silent
+action: xplora_watch.create_silent
 data:
-  target:
-    - 01102f442f1125f525f5f3336316068        # watch id
-  user:
-    - "<entry_id> (Parent Name)"             # account (entry id), as offered in the dropdown
+  device_id: <watch device>     # the "Watch(es)" field — the "Dana Watch (Mom)" device
   start: "22:00"
   end: "07:00"
   weekdays: [mon, tue, wed, thu, fri]
@@ -338,24 +335,18 @@ data:
 
 ```yaml
 # Disable a single alarm (alarm_id taken from sensor.<watch>_alarms attributes)
-service: xplora_watch.set_alarm_enabled
+action: xplora_watch.set_alarm_enabled
 data:
-  target:
-    - 01102f442f1125f525f5f3336316068
-  user:
-    - "<entry_id> (Parent Name)"
+  device_id: <watch device>
   alarm_id: alarm-123
   enabled: false
 ```
 
 ```yaml
 # Silence everything for the day (e.g. a school holiday) — no per-entry ids needed
-service: xplora_watch.turn_all_silents_off
+action: xplora_watch.turn_all_silents_off
 data:
-  target:
-    - 01102f442f1125f525f5f3336316068
-  user:
-    - "<entry_id> (Parent Name)"
+  device_id: <watch device>
 ```
 
 > **Note (polling off by default):** with polling disabled, a successful create/update/delete/toggle
@@ -374,8 +365,7 @@ hunting for ids:
 
 - **Copy ID** — the raw `alarm_id` / `silent_id`.
 - **Copy service call** — a complete, paste-ready `set_alarm_enabled` / `set_silent_enabled`
-  automation action with `user`, `target`, the id and the current `enabled` state already filled in
-  (no need to guess the `user: ["<entry_id> (<name>)"]` convention).
+  automation action with the watch target, the id and the current `enabled` state already filled in.
 - **Copy payload** — the `create_alarm` / `create_silent` service-data needed to reproduce that
   entry on another watch.
 
@@ -413,17 +403,15 @@ holidays):
 1. Add the **Alarms** (or **Silent Times**) card and point it at the watch's `*_alarms` /
    `*_silents` sensor.
 2. On the row you want, open the **⋮** menu → **Copy service call**. This puts a ready-to-use
-   action on your clipboard, with the watch, account and entry id already filled in.
+   action on your clipboard, with the watch (as its own entity) and the entry id already filled in.
 3. Create an automation, switch the action editor to **YAML mode**, and paste. Flip `enabled: true`
    to `false` (or vice-versa) for what you want it to do. Example of what you'll paste:
 
    ```yaml
    action: xplora_watch.set_alarm_enabled
+   target:
+     entity_id: sensor.kid_one_watch_alarms   # the card fills in the watch's own entity
    data:
-     user:
-       - "<entry_id> (Parent Name)"
-     target:
-       - 01102f442f1125f525f5f3336316068
      alarm_id: alarm-123
      enabled: false
    ```
@@ -441,14 +429,11 @@ holidays):
 # Silence every window on a school holiday, restore them in the evening
 action: xplora_watch.turn_all_silents_off
 data:
-  user:
-    - "<entry_id> (Parent Name)"
-  target:
-    - 01102f442f1125f525f5f3336316068
+  device_id: <watch device>
 ```
 
 The matching `turn_all_alarms_on` / `turn_all_alarms_off` / `turn_all_silents_on` services work the
-same way. Set `target` to `all` to apply it to every watch on the account.
+same way. The **Watch(es)** field is multi-select, so you can apply it to several watches at once.
 
 #### Chat card
 
@@ -530,34 +515,28 @@ trigger:
   - platform: time
     at: "03:00:00"
 action:
-  - service: xplora_watch.fetch_history
+  - action: xplora_watch.fetch_history
     data:
-      target:
-        - 01102f442f1125f525f5f3336316068    # watch id
-      user:
-        - "<entry_id> (Parent Name)"         # account (entry id), as offered in the dropdown
+      device_id: <watch device>             # the "Watch(es)" field — the "Dana Watch (Mom)" device
       # date: "2026-06-25"                    # optional; omit to fetch yesterday (YYYY-MM-DD)
 ```
 
-`target` (the watch) and `user` (the account) are picked from dropdowns in the UI, exactly like the
-other services. Omit `date` to archive yesterday; pass a `YYYY-MM-DD` date to backfill a specific day
-the watch still serves. Increase **History retention (days)** in the **Configure** dialog to keep
-more than the default two weeks.
+Pick the watch with the device/area target picker, exactly like the other services. Omit `date` to
+archive yesterday; pass a `YYYY-MM-DD` date to backfill a specific day the watch still serves.
+Increase **History retention (days)** in the **Configure** dialog to keep more than the default two
+weeks.
 
 ---
 
 ## Send Message
 
-> **⚠️ Breaking change:** `notify.xplora_watch` has been **removed**. Use the `xplora_watch.send_message` service instead (available in the HA developer tools UI, where the `user` dropdown is pre-populated from your configured accounts).
+> **⚠️ Breaking change:** `notify.xplora_watch` has been **removed**. Use the `xplora_watch.send_message` service instead (available in the HA developer tools UI). **All services now pick the watch *device*** in a single **Watch(es)** field (e.g. `Dana Watch (Mom)`), filtered to your Xplora watches — one pick identifies both the watch and its account, replacing the old `user` + `target` selectors. Update any automation that used `user:` / `target:` (the magic `all` is gone — the field is multi-select instead).
 
 ```yaml
-service: xplora_watch.send_message
+action: xplora_watch.send_message
 data:
-  user:
-    - "<entry_id> (<username>)"
+  device_id: <watch device>   # the "Watch(es)" field — select one or more "Dana Watch (Mom)" devices
   message: "Hello!"
-  target:
-    - "<watch_wuid>"   # or "all" to target every watch in the entry
 ```
 
 

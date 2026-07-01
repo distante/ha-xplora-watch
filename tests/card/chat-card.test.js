@@ -97,7 +97,7 @@ describe("refresh button", () => {
     el.shadowRoot.querySelector(".refresh-btn").click();
 
     // The service call is issued synchronously before the await, so it's recorded immediately.
-    expect(calls).toContainEqual(["xplora_watch", "read_message", { target: ["watch1"], user: ["entry1"] }, undefined, false]);
+    expect(calls).toContainEqual(["xplora_watch", "read_message", { entity_id: ["sensor.watch_message"] }, undefined, false]);
   });
 
   it("recovers from a service call that never settles so the button isn't wedged forever", () => {

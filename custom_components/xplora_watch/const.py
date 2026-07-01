@@ -37,8 +37,9 @@ ATTR_SERVICE_REBOOT: Final = "reboot"
 ATTR_SERVICE_LOGOUT: Final = "logout"
 ATTR_SERVICE_MSG: Final = "message"
 ATTR_SERVICE_MSGID: Final = "message_id"
+# `user` is still surfaced as a per-watch state attribute (the account display name); it is no longer
+# a service selector -- services target HA devices (ADR 0003).
 ATTR_SERVICE_USER: Final = "user"
-ATTR_SERVICE_TARGET: Final = "target"
 
 # Alarm / silent-time CRUD services and their field names.
 ATTR_SERVICE_CREATE_ALARM: Final = "create_alarm"
