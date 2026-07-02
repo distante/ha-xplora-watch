@@ -101,6 +101,24 @@ This integration comes with a devcontainer, easy to use with Visual Studio Code.
 [blog post](https://helgeklein.com/blog/developing-custom-integrations-for-home-assistant-getting-started/)
 for helpful information on how to get started with Home Assistant integration development.
 
+## Cutting a release
+
+**The GitHub Release notes are this project's changelog.** There is no `CHANGELOG.md` file by design —
+don't add one. The release body is what HACS shows users in the update dialog, so it is written by
+hand for every release.
+
+Pushing a version tag does **not** publish a release. The [`Release`
+workflow](.github/workflows/release.yml) creates a **draft** so a tag can never ship empty,
+auto-generated notes to users. To cut a release:
+
+1. Bump `version` in [`manifest.json`](custom_components/xplora_watch/manifest.json) and commit.
+2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The workflow creates a **draft** Release seeded with auto-generated notes (a commit/PR list and the
+   compare link) as a starting point.
+4. Open the draft on the [Releases page](../../releases), replace the body with real notes (what
+   changed, plus any breaking changes / upgrade steps), keep **Set as the latest release** checked, and
+   click **Publish**. HACS only sees the new version once the release is published.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under its MIT License.

@@ -1,8 +1,11 @@
-# Auto-publishes a GitHub Release whenever a version tag (v*) is pushed.
+# Drafts a GitHub Release whenever a version tag (v*) is pushed.
 #
-# HACS installs the latest *Release*, not the latest tag, so a tag on its own
-# never reaches users. This turns each `git push origin vX.Y.Z` into a published
-# Release (marked Latest) with auto-generated notes, closing that gap.
+# HACS installs the latest *published* Release — not the latest tag, and not a
+# draft. Pushing a tag stages a DRAFT release seeded with auto-generated notes;
+# a maintainer then writes the real release notes and clicks Publish, at which
+# point HACS sees the new version. Drafting (rather than auto-publishing) makes
+# it structurally impossible to ship empty/auto-only notes to users — the
+# release body is this project's changelog. See CONTRIBUTING "Cutting a release".
 #
 # Notes are generated server-side by the GitHub API from the commits/PRs since
 # the previous tag. The built-in GITHUB_TOKEN's `contents: write` is sufficient;
@@ -16,7 +19,7 @@ on:
 
 jobs:
   release:
-    name: Publish Release
+    name: Draft Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -26,7 +29,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create release from tag
+      - name: Draft release from tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -35,8 +38,10 @@ jobs:
             echo "Release $tag already exists; nothing to do."
             exit 0
           fi
+          # Create a DRAFT (no --latest): a maintainer fills in the notes and
+          # publishes it manually, so HACS never sees empty auto-only notes.
           gh release create "$tag" \
             --title "$tag" \
             --generate-notes \
-            --latest \
+            --draft \
             --verify-tag
