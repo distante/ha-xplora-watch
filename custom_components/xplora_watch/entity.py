@@ -15,7 +15,16 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
 from .config import ResolvedOptions, resolve, resolve_account_alias
-from .const import ATTR_WATCH, ATTRIBUTION, CONF_REFRESH_ON_CARD_RENDER, DEVICE_NAME, DOMAIN, MANUFACTURER, TRACKER_UPDATE_STR
+from .const import (
+    ATTR_WATCH,
+    ATTR_XPLORA_ROLE,
+    ATTRIBUTION,
+    CONF_REFRESH_ON_CARD_RENDER,
+    DEVICE_NAME,
+    DOMAIN,
+    MANUFACTURER,
+    TRACKER_UPDATE_STR,
+)
 from .coordinator import XploraDataUpdateCoordinator
 from .helper import account_token, watch_user_label
 from .log import Log
@@ -30,6 +39,9 @@ class XploraBaseEntity(CoordinatorEntity[XploraDataUpdateCoordinator], RestoreEn
     _attr_attribution = ATTRIBUTION
     _attr_force_update = False
     _state = None
+    # The entity's role (its `branded_object_id` first part, e.g. "battery"/"tracker"/"update"),
+    # captured when the id is built and surfaced via `extra_state_attributes` for the cards (ADR 0005).
+    _xplora_role: str | None = None
 
     def __init__(
         self,
@@ -85,7 +97,13 @@ class XploraBaseEntity(CoordinatorEntity[XploraDataUpdateCoordinator], RestoreEn
         onto it. `parts` are the entity's role-specific tokens (sensor key, alarm time, …); the
         slugified account token is appended as the trailing segment so slugs stay collision-free
         across accounts that link the same watch.
+
+        The first part is the entity's ROLE; it is recorded here (and surfaced via
+        ``extra_state_attributes`` as ``xplora_role``) so the cards discover entities by role
+        without parsing this account-tokened slug (ADR 0005).
         """
+        if parts:
+            self._xplora_role = parts[0]
         return slugify(" ".join(["xplora", self.watch_name, ATTR_WATCH, *parts, self.account_token]))
 
     @property
@@ -100,8 +118,16 @@ class XploraBaseEntity(CoordinatorEntity[XploraDataUpdateCoordinator], RestoreEn
         `CONF_REFRESH_ON_CARD_RENDER` is surfaced so the custom Lovelace cards -- which may bind to
         *any* of the watch's entities -- can read the user's "refresh on render" preference without
         a separate websocket round-trip. Subclasses merge this via ``super().extra_state_attributes``.
+
+        `xplora_role` (the entity's role, e.g. "battery"/"tracker"/"update") is surfaced too so the
+        cards can discover a watch's entities by role via (domain, role) rather than parsing the
+        account-tokened entity_id (ADR 0005). It is omitted until the branded id is built (i.e. never
+        for the bare base entity), so an entity always either reports a real role or none at all.
         """
-        return {CONF_REFRESH_ON_CARD_RENDER: self._resolved_options.refresh_on_card_render}
+        attrs: dict[str, Any] = {CONF_REFRESH_ON_CARD_RENDER: self._resolved_options.refresh_on_card_render}
+        if self._xplora_role is not None:
+            attrs[ATTR_XPLORA_ROLE] = self._xplora_role
+        return attrs
 
     def _states(self, status: str) -> bool:
         if status == "DISABLE":

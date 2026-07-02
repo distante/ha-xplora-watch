@@ -9,6 +9,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.xplora_watch.config import resolve
 from custom_components.xplora_watch.const import (
+    ATTR_XPLORA_ROLE,
     CONF_ACCOUNT_ALIAS,
     CONF_REFRESH_ON_CARD_RENDER,
     DOMAIN,
@@ -163,6 +164,28 @@ async def test_extra_state_attributes_exposes_refresh_on_card_render(
     # With the option enabled, the same attribute reflects the opt-in.
     entity._resolved_options = resolve({CONF_REFRESH_ON_CARD_RENDER: True})
     assert entity.extra_state_attributes[CONF_REFRESH_ON_CARD_RENDER] is True
+
+
+async def test_extra_state_attributes_exposes_xplora_role(
+    mock_config_entry_phone: MockConfigEntry, coordinator_with_data: XploraDataUpdateCoordinator
+) -> None:
+    """Building the branded object id captures the entity's ROLE (its first part), and
+    `extra_state_attributes` surfaces it as `xplora_role`. This lets the Lovelace cards discover a
+    watch's entities by role via (domain, xplora_role) instead of parsing the account-tokened
+    entity_id (ADR 0005). Role discovery must not depend on the id string.
+    """
+    entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
+    # No id built yet -> no role to report (the attribute is simply absent, not null).
+    assert ATTR_XPLORA_ROLE not in entity.extra_state_attributes
+
+    # A single-part id (the common sensor/binary_sensor/button case) reports that part as the role.
+    entity.branded_object_id("battery")
+    assert entity.extra_state_attributes[ATTR_XPLORA_ROLE] == "battery"
+
+    # A multi-part id (e.g. the safezone tracker `branded_object_id("safezone", <zone name>)`) still
+    # reports the ROLE (first part), never the trailing tokens.
+    entity.branded_object_id("safezone", "Home Zone")
+    assert entity.extra_state_attributes[ATTR_XPLORA_ROLE] == "safezone"
 
 
 def test_states_disable_returns_false() -> None:

@@ -8,7 +8,9 @@ import { loadBundle } from "./helpers.js";
 // per-day websocket fetch (Leaflet rendering is covered in overview-history-map).
 
 const DEVICE = "dev1";
-const HIST = "sensor.xplora_kid_watch_location_history";
+// Account-tokened id + integration-emitted `xplora_role`: the overview resolves its "history" role
+// by (domain, role), not the id suffix (ADR 0005).
+const HIST = "sensor.xplora_kid_watch_location_history_mom";
 
 function points(n, baseTm = 1700000000000) {
   return Array.from({ length: n }, (_, i) => ({
@@ -41,6 +43,7 @@ function makeHass({ attrPoints = points(2), total, historyDays = [], callWS, cal
           history_total_points: total ?? attrPoints.length,
           history_window_hours: 24,
           friendly_name: "Kid Watch Location History",
+          xplora_role: "location_history",
         },
       },
     },

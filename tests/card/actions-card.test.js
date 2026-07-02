@@ -14,7 +14,13 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const ENTITIES = ["button.kid_update", "button.kid_refresh_functions", "button.kid_reboot"];
+// Account-tokened button ids (…_mom) with the integration-emitted `xplora_role` attribute: the card
+// classifies each action by its role, not by parsing the id suffix (ADR 0005).
+const UPDATE = "button.kid_update_mom";
+const REFRESH_FUNCTIONS = "button.kid_refresh_functions_mom";
+const REBOOT = "button.kid_reboot_mom";
+const ENTITIES = [UPDATE, REFRESH_FUNCTIONS, REBOOT];
+const ROLE = { [UPDATE]: "update", [REFRESH_FUNCTIONS]: "refresh_functions", [REBOOT]: "reboot" };
 
 function mountActions(calls) {
   const el = document.createElement("xplora-watch-actions-card");
@@ -22,7 +28,7 @@ function mountActions(calls) {
   document.body.appendChild(el);
   el.hass = {
     states: Object.fromEntries(
-      ENTITIES.map((id) => [id, { state: "unknown", attributes: { friendly_name: id } }]),
+      ENTITIES.map((id) => [id, { state: "unknown", attributes: { friendly_name: id, xplora_role: ROLE[id] } }]),
     ),
     entities: {},
     locale: { language: "en" },
@@ -39,9 +45,9 @@ describe("actions card button -> service call", () => {
     const calls = [];
     const el = mountActions(calls);
 
-    el.shadowRoot.querySelector('[data-entity="button.kid_update"]').click();
+    el.shadowRoot.querySelector(`[data-entity="${UPDATE}"]`).click();
 
-    expect(calls).toContainEqual(["button", "press", { entity_id: "button.kid_update" }, undefined, false]);
+    expect(calls).toContainEqual(["button", "press", { entity_id: UPDATE }, undefined, false]);
   });
 
   it("the Refresh-functions button presses immediately (no confirm)", () => {
@@ -49,9 +55,9 @@ describe("actions card button -> service call", () => {
     const calls = [];
     const el = mountActions(calls);
 
-    el.shadowRoot.querySelector('[data-entity="button.kid_refresh_functions"]').click();
+    el.shadowRoot.querySelector(`[data-entity="${REFRESH_FUNCTIONS}"]`).click();
 
-    expect(pressed(calls)).toEqual(["button.kid_refresh_functions"]);
+    expect(pressed(calls)).toEqual([REFRESH_FUNCTIONS]);
   });
 
   it("a destructive action (Restart) presses only after the confirm dialog", () => {
@@ -59,13 +65,13 @@ describe("actions card button -> service call", () => {
     const calls = [];
     const el = mountActions(calls);
 
-    el.shadowRoot.querySelector('[data-entity="button.kid_reboot"]').click();
+    el.shadowRoot.querySelector(`[data-entity="${REBOOT}"]`).click();
     // Nothing sent yet -- a confirmation panel is shown instead.
     expect(calls).toHaveLength(0);
     const confirmBtn = el.shadowRoot.querySelector('[data-act="confirm"]');
     expect(confirmBtn).not.toBeNull();
 
     confirmBtn.click();
-    expect(pressed(calls)).toEqual(["button.kid_reboot"]);
+    expect(pressed(calls)).toEqual([REBOOT]);
   });
 });

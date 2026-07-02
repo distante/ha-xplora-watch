@@ -206,6 +206,17 @@ export function markRefreshed(key) {
   _refreshDedup.set(key, Date.now());
 }
 
+// Every Xplora entity carries its role in the `xplora_role` state attribute (its entity-description
+// key -- "battery", "state", "update", "tracker", …), emitted by the integration so the cards can
+// discover a watch's entities by role WITHOUT parsing the account-tokened entity_id (ADR 0005).
+// Returns undefined when the entity has no state yet (nothing to show), so callers skip it until it
+// warms up. Role discovery keys on (entity domain, this value) -- never on the id string.
+const XPLORA_ROLE_ATTR = "xplora_role";
+export function roleOf(hass, entityId) {
+  const s = hass && hass.states && hass.states[entityId];
+  return s && s.attributes ? s.attributes[XPLORA_ROLE_ATTR] : undefined;
+}
+
 // Canonical weekday order. Index 0 = Sunday .. 6 = Saturday — matches the integration's
 // `weekRepeat` string and the `weekdays` keys the sensor already exposes per entry.
 const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -1351,18 +1362,19 @@ function relTimeIso(iso) {
 class XploraWatchActionsCard extends HTMLElement {
   // Per-action presentation, keyed by the button entity_id suffix. `confirm:false` means the
   // press fires immediately; everything not listed defaults to confirm-required (safe default).
+  // Keyed by the entity's `xplora_role` (its integration-emitted role, ADR 0005), not an id suffix.
   static ACTIONS = {
-    _update: { label: "Update", icon: "mdi:refresh", appearance: "filled", variant: "brand", confirm: false },
+    update: { label: "Update", icon: "mdi:refresh", appearance: "filled", variant: "brand", confirm: false },
     // `refresh_functions` re-fetches alarms/silent times; harmless, so it fires without a confirm.
-    _refresh_functions: {
+    refresh_functions: {
       label: "Refresh Alarms & Silent Times",
       icon: "mdi:calendar-refresh",
       appearance: "outlined",
       variant: "neutral",
       confirm: false,
     },
-    _reboot: { label: "Restart", icon: "mdi:restart", appearance: "outlined", variant: "neutral", confirm: true },
-    _shutdown: { label: "Turn off", icon: "mdi:power", appearance: "outlined", variant: "danger", confirm: true },
+    reboot: { label: "Restart", icon: "mdi:restart", appearance: "outlined", variant: "neutral", confirm: true },
+    shutdown: { label: "Turn off", icon: "mdi:power", appearance: "outlined", variant: "danger", confirm: true },
   };
 
   constructor() {
@@ -1391,7 +1403,7 @@ class XploraWatchActionsCard extends HTMLElement {
 
   static getStubConfig(hass) {
     const ids = hass && hass.states ? Object.keys(hass.states) : [];
-    const found = ids.filter((id) => id.startsWith("button.") && /_(update|refresh_functions|reboot|shutdown)$/.test(id));
+    const found = ids.filter((id) => id.startsWith("button.") && XploraWatchActionsCard.ACTIONS[roleOf(hass, id)]);
     return { entities: found.length ? found : ["button.xplora_watch_update"] };
   }
 
@@ -1426,10 +1438,9 @@ class XploraWatchActionsCard extends HTMLElement {
   }
 
   _action(entityId) {
-    const key = Object.keys(XploraWatchActionsCard.ACTIONS).find((suffix) => entityId.endsWith(suffix));
-    // Unknown actions default to confirm-required so a future destructive button is guarded too.
+    // Unknown/unrecognised roles default to confirm-required so a future destructive button is guarded too.
     return (
-      (key && XploraWatchActionsCard.ACTIONS[key]) || {
+      XploraWatchActionsCard.ACTIONS[roleOf(this._hass, entityId)] || {
         label: null,
         icon: "mdi:gesture-tap-button",
         appearance: "outlined",
@@ -1459,7 +1470,7 @@ class XploraWatchActionsCard extends HTMLElement {
     if (!this._hass) return;
     const action = this._action(entityId);
     const label = this._label(entityId, action);
-    const isUpdate = /_update$/.test(entityId);
+    const isUpdate = roleOf(this._hass, entityId) === "update";
     const before = this._lastUpdateState();
     const beforeStamp = before ? before.last_updated : null;
 
@@ -1517,7 +1528,7 @@ class XploraWatchActionsCard extends HTMLElement {
     const devId = this._deviceId();
     if (!devId) return null;
     const found = Object.values(ents).find(
-      (e) => e.device_id === devId && e.entity_id.startsWith("sensor.") && e.entity_id.endsWith("_last_update")
+      (e) => e.device_id === devId && roleOf(hass, e.entity_id) === "last_update"
     );
     return found ? hass.states[found.entity_id] : null;
   }
@@ -1772,21 +1783,23 @@ window.customCards.push({
  *   title: Kid One                                         # optional name override
  */
 class XploraWatchOverviewCard extends HTMLElement {
-  // entity_id suffix -> logical role. The integration builds ids as
-  // "<domain>.xplora_<watch>_watch_<key>", so the suffix is "_<key>".
-  static ROLES = {
-    _battery: "battery",
-    _charging: "charging",
-    _state: "online",
-    _safezone: "safezone",
-    _step_day: "steps",
-    _xcoin: "xcoin",
-    _message: "messages",
-    _alarms: "alarms",
-    _silents: "silents",
-    _location_history: "history",
-    _tracker: "tracker",
-    _last_update: "lastupdate",
+  // "<domain>.<xplora_role>" -> this card's logical role. Keyed on the integration-emitted role
+  // attribute (ADR 0005), not the entity_id, so account-tokened / renamed ids still resolve. Scoped
+  // by domain because `safezone` is emitted by BOTH a binary_sensor (the in/out tile) and
+  // device_tracker per-zone entities -- the domain tells them apart.
+  static ROLE_BY_DOMAIN_ROLE = {
+    "sensor.battery": "battery",
+    "sensor.step_day": "steps",
+    "sensor.xcoin": "xcoin",
+    "sensor.message": "messages",
+    "sensor.alarms": "alarms",
+    "sensor.silents": "silents",
+    "sensor.last_update": "lastupdate",
+    "sensor.location_history": "history",
+    "binary_sensor.charging": "charging",
+    "binary_sensor.state": "online",
+    "binary_sensor.safezone": "safezone",
+    "device_tracker.tracker": "tracker",
   };
 
   static TILES = [
@@ -1844,7 +1857,7 @@ class XploraWatchOverviewCard extends HTMLElement {
 
   static getStubConfig(hass) {
     const ids = hass && hass.states ? Object.keys(hass.states) : [];
-    const tracker = ids.find((id) => id.startsWith("device_tracker.") && id.includes("xplora") && id.endsWith("_tracker"));
+    const tracker = ids.find((id) => id.startsWith("device_tracker.") && roleOf(hass, id) === "tracker");
     const any = ids.find((id) => id.includes("xplora") && id.includes("_watch_"));
     return { entity: tracker || any || "device_tracker.xplora_watch_tracker" };
   }
@@ -1883,7 +1896,9 @@ class XploraWatchOverviewCard extends HTMLElement {
     return (this._hass && this._hass.locale && this._hass.locale.language) || navigator.language || "en";
   }
 
-  // Discover the watch's entities (keyed by role) from the registry, given any one of them.
+  // Discover the watch's entities (keyed by this card's logical role) from the registry, given any
+  // one of them. Each entity is placed by its (domain, integration-emitted `xplora_role`) rather
+  // than by parsing the entity_id, so account-tokened / user-renamed ids still resolve (ADR 0005).
   _watchEntities() {
     const hass = this._hass;
     const conf = this._config;
@@ -1892,20 +1907,18 @@ class XploraWatchOverviewCard extends HTMLElement {
     if (!deviceId && conf.entity && ents[conf.entity]) deviceId = ents[conf.entity].device_id;
     this._deviceId = deviceId;
 
-    const suffixes = Object.keys(XploraWatchOverviewCard.ROLES);
     const map = {};
+    const place = (id) => {
+      const role = XploraWatchOverviewCard.ROLE_BY_DOMAIN_ROLE[`${id.split(".")[0]}.${roleOf(hass, id)}`];
+      if (role) map[role] = id;
+    };
     if (deviceId) {
       Object.values(ents).forEach((e) => {
-        if (e.device_id !== deviceId) return;
-        const sfx = suffixes.find((s) => e.entity_id.endsWith(s));
-        if (sfx) map[XploraWatchOverviewCard.ROLES[sfx]] = e.entity_id;
+        if (e.device_id === deviceId) place(e.entity_id);
       });
     }
     // Fallback when the entity registry isn't exposed: at least map the configured entity itself.
-    if (Object.keys(map).length === 0 && conf.entity) {
-      const sfx = suffixes.find((s) => conf.entity.endsWith(s));
-      if (sfx) map[XploraWatchOverviewCard.ROLES[sfx]] = conf.entity;
-    }
+    if (Object.keys(map).length === 0 && conf.entity) place(conf.entity);
     return map;
   }
 
@@ -1984,7 +1997,7 @@ class XploraWatchOverviewCard extends HTMLElement {
         );
       }
     }
-    const updateBtn = this._buttonEntities().find((id) => id.endsWith("_update"));
+    const updateBtn = this._buttonEntities().find((id) => roleOf(this._hass, id) === "update");
     if (updateBtn) {
       handles.push(
         trackInflight(`button.press|${updateBtn}`, () => this._hass.callService("button", "press", { entity_id: updateBtn }))
@@ -2212,7 +2225,7 @@ class XploraWatchOverviewCard extends HTMLElement {
         };
         // Refreshing presses the watch's own `update` button entity (same effect as the `see`
         // service) -- only available if it's enabled, like the controls popup's cog button.
-        const updateBtn = this._buttonEntities().find((id) => id.endsWith("_update"));
+        const updateBtn = this._buttonEntities().find((id) => roleOf(this._hass, id) === "update");
         this._openPopup(
           async () => {
             const helpers = await window.loadCardHelpers();
@@ -2953,7 +2966,7 @@ class XploraWatchChatCard extends HTMLElement {
   static getStubConfig(hass) {
     let entity = "sensor.watch_message";
     if (hass && hass.states) {
-      const match = Object.keys(hass.states).find((id) => id.includes("xplora") && id.endsWith("_message"));
+      const match = Object.keys(hass.states).find((id) => roleOf(hass, id) === "message");
       if (match) entity = match;
     }
     return { entity };

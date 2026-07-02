@@ -106,6 +106,12 @@ CONF_SCAN_INTERVAL_FUNCTIONS: Final = "scan_interval_functions"
 # `update`/`see` flow, chat via `read_message`). OFF by default to stay off the rate-limit radar;
 # the cards de-duplicate so several cards in one view only refresh each watch's data set once.
 CONF_REFRESH_ON_CARD_RENDER: Final = "refresh_on_card_render"
+# State attribute exposing each entity's role (its entity-description key, e.g. "battery", "state",
+# "update", "tracker") so the custom Lovelace cards can discover a watch's entities by role without
+# parsing the account-tokened entity_id. Role discovery keyed on (entity domain, this value); see
+# ADR 0005. Set from the single seam `XploraBaseEntity.branded_object_id` and merged in by the base
+# `extra_state_attributes`, so every entity carries it.
+ATTR_XPLORA_ROLE: Final = "xplora_role"
 # When enabled, the integration automatically fetches the previous day's location track at 01:00
 # local time — only if the day's data is not already cached. Removes the need for a manual
 # automation calling `xplora_watch.fetch_history` daily.

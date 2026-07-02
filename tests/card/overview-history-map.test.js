@@ -7,7 +7,8 @@ import { loadBundle } from "./helpers.js";
 // leak into the list-fallback file (vitest isolates the custom-element registry per file).
 
 const DEVICE = "dev1";
-const HIST = "sensor.xplora_kid_watch_location_history";
+// Account-tokened id + integration-emitted `xplora_role` (ADR 0005): discovery is by (domain, role).
+const HIST = "sensor.xplora_kid_watch_location_history_mom";
 
 function makeHass(attrPoints) {
   return {
@@ -26,6 +27,7 @@ function makeHass(attrPoints) {
           history_total_points: attrPoints.length,
           history_window_hours: 24,
           friendly_name: "Kid Watch Location History",
+          xplora_role: "location_history",
         },
       },
     },

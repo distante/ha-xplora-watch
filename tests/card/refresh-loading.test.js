@@ -31,9 +31,11 @@ afterEach(() => {
 // makes the dedup keys unique per test. `callService` captures + can delay the `button.press` call
 // so a test can prove the indicator waits for the SLOWER of the two refreshes.
 function makeOverviewHass({ tag, lastUpdate = "ok", callService } = {}) {
-  const PRIMARY = "sensor.watch_alarms";
-  const BTN = `button.${tag}_update`;
-  const LU = "sensor.watch_last_update";
+  // Account-tokened ids (…_mom) carrying the integration-emitted `xplora_role`: role discovery must
+  // resolve them by (domain, role), not by the id suffix (ADR 0005).
+  const PRIMARY = "sensor.watch_alarms_mom";
+  const BTN = `button.${tag}_update_mom`;
+  const LU = "sensor.watch_last_update_mom";
   const DEV = `dev-${tag}`;
   return {
     states: {
@@ -48,15 +50,16 @@ function makeOverviewHass({ tag, lastUpdate = "ok", callService } = {}) {
           friendly_name: "Dana",
           alarm: [{ id: "a1", status: "ENABLE", start: "07:00", weekdays: ["mon"] }],
           refresh_on_card_render: true,
+          xplora_role: "alarms",
         },
       },
-      [BTN]: { entity_id: BTN, state: "2026-06-27T10:00:00Z", attributes: {} },
+      [BTN]: { entity_id: BTN, state: "2026-06-27T10:00:00Z", attributes: { xplora_role: "update" } },
       [LU]: {
         entity_id: LU,
         state: lastUpdate,
         last_changed: "2026-06-27T09:00:00Z",
         last_updated: "2026-06-27T10:00:00Z",
-        attributes: {},
+        attributes: { xplora_role: "last_update" },
       },
     },
     entities: {
@@ -72,7 +75,7 @@ function makeOverviewHass({ tag, lastUpdate = "ok", callService } = {}) {
 
 function mountOverview(hass) {
   const el = document.createElement("xplora-watch-overview-card");
-  el.setConfig({ entity: "sensor.watch_alarms" });
+  el.setConfig({ entity: "sensor.watch_alarms_mom" });
   document.body.appendChild(el);
   el.hass = hass;
   return el;

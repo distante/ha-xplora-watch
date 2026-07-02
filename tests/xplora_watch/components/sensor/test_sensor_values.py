@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from custom_components.xplora_watch.const import (
     ATTR_TRACKER_LAT,
     ATTR_TRACKER_LNG,
+    ATTR_XPLORA_ROLE,
     CONF_REFRESH_ON_CARD_RENDER,
     SENSOR_BATTERY,
     SENSOR_DISTANCE,
@@ -114,6 +115,7 @@ async def test_extra_state_attributes_message_merges_chats(
     # entity also contributes the shared `refresh_on_card_render` flag the cards read.
     assert attributes == {
         CONF_REFRESH_ON_CARD_RENDER: False,
+        ATTR_XPLORA_ROLE: SENSOR_MESSAGE,
         "list": [{"id": "msg-1"}],
         "entry_id": mock_config_entry_phone.entry_id,
         "wuid": DEFAULT_WUID,
@@ -139,6 +141,7 @@ async def test_extra_state_attributes_message_exposes_ids_when_no_chats_yet(
 
     assert attributes == {
         CONF_REFRESH_ON_CARD_RENDER: False,
+        ATTR_XPLORA_ROLE: SENSOR_MESSAGE,
         "entry_id": mock_config_entry_phone.entry_id,
         "wuid": DEFAULT_WUID,
         "account_user_id": coordinator_with_data.user_id,
@@ -155,5 +158,6 @@ async def test_extra_state_attributes_other_types_add_user(
 
     assert attributes == {
         CONF_REFRESH_ON_CARD_RENDER: False,
+        ATTR_XPLORA_ROLE: SENSOR_BATTERY,
         "user": coordinator_with_data.controller.getUserName(),
     }

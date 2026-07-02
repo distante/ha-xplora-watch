@@ -26,7 +26,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const ALARMS_ENTITY = "sensor.xw_alarms";
+// Account-tokened id carrying the integration-emitted `xplora_role`; the overview resolves its
+// "alarms" role by (domain, role), not the id suffix (ADR 0005).
+const ALARMS_ENTITY = "sensor.xw_alarms_mom";
 
 // One watch exposed as the entities both cards resolve against: an `_alarms` list sensor (the
 // alarm/silent card binds to it; the overview discovers it as its "alarms" role and keys the shared
@@ -35,8 +37,8 @@ const ALARMS_ENTITY = "sensor.xw_alarms";
 // registry-based discovery groups them. The `_alarms` sensor carries the entry_id/wuid both cards
 // build the `refresh_functions|<entry>|<wuid>` dedup key from -> the runs coalesce onto one.
 function makeSharedHass({ tag, callService } = {}) {
-  const BTN = `button.xw_${tag}_update`;
-  const LU = "sensor.xw_last_update";
+  const BTN = `button.xw_${tag}_update_mom`;
+  const LU = "sensor.xw_last_update_mom";
   const DEV = `dev-${tag}`;
   const attrs = {
     entry_id: `e-${tag}`,
@@ -44,6 +46,7 @@ function makeSharedHass({ tag, callService } = {}) {
     friendly_name: "Dana",
     alarm: [{ id: "a1", status: "ENABLE", start: "07:00", weekdays: ["mon"] }],
     refresh_on_card_render: true,
+    xplora_role: "alarms",
   };
   return {
     states: {
@@ -54,13 +57,13 @@ function makeSharedHass({ tag, callService } = {}) {
         last_updated: "2026-06-27T10:00:00Z",
         attributes: attrs,
       },
-      [BTN]: { entity_id: BTN, state: "2026-06-27T10:00:00Z", attributes: {} },
+      [BTN]: { entity_id: BTN, state: "2026-06-27T10:00:00Z", attributes: { xplora_role: "update" } },
       [LU]: {
         entity_id: LU,
         state: "ok",
         last_changed: "2026-06-27T09:00:00Z",
         last_updated: "2026-06-27T10:00:00Z",
-        attributes: {},
+        attributes: { xplora_role: "last_update" },
       },
     },
     entities: {
