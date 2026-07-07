@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
 
@@ -70,7 +70,7 @@ from .const import (
 from .demo import is_demo_account, make_controller
 from .geocoder import OpenCageGeocodeUA
 from .log import Log
-from .pyxplora_api.const import ALL_WATCH_FUNCTIONS, DEFAULT_TIMEOUT, WatchFunction
+from .pyxplora_api.const import ALL_WATCH_FUNCTIONS, DEFAULT_TIMEOUT, MISSING_LOCATION_TM, WatchFunction
 from .pyxplora_api.exception_classes import AuthError, Error, LoginError, RateLimitError
 from .pyxplora_api.exception_classes import ConnectionError as XploraConnectionError
 from .pyxplora_api.model import ChatsNew
@@ -991,11 +991,41 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
         ):
             if watch_last_location.get(key) is not None:
                 self.device[key] = watch_last_location[key]
-        if fresh.get("tm"):
-            self.device["lastTrackTime"] = fresh["tm"]
-        if watch_last_location.get("tm"):
+        # `tm` is the timestamp OF this lat/lng fix and now drives the shown position's age
+        # (ADR 0007), so advance it only when the payload actually carried a position -- otherwise a
+        # response with a fresh `tm` but null lat/lng would age-stamp an unchanged pin as "just now".
+        if (
+            watch_last_location.get("tm")
+            and watch_last_location.get(ATTR_TRACKER_LAT) is not None
+            and watch_last_location.get(ATTR_TRACKER_LNG) is not None
+        ):
             self.device["tm"] = watch_last_location["tm"]
         return responded
+
+    @staticmethod
+    def _fix_time_iso(epoch: Any) -> str | None:
+        """Format a watch fix's epoch-seconds `tm` as an ISO-8601 UTC string, or None if unknown.
+
+        None/0/negative/the missing-`tm` sentinel/an unparseable/out-of-range value all mean "no
+        known fix time" -- the caller drops the timestamp rather than showing a fabricated or bogus
+        one (ADR 0007). Coerce to int BEFORE the sentinel/range checks: this vendor's `tm` is not
+        reliably typed (cf. `_to_epoch_ms`), so a stringified `"0"`/`"31532399"` must not slip past
+        into a 1970 date. `MISSING_LOCATION_TM` is the shared placeholder pyxplora substitutes for a
+        fix that carries no `tm` (see loadWatchLocation) -- one constant so producer and guard can't
+        drift. Every failure mode returns None, never raises: an escaped exception here would
+        propagate past the poll's terminal handler and fail the whole account's refresh (int() can
+        raise OverflowError on inf; fromtimestamp raises ValueError on a 13-digit/out-of-range tm).
+        """
+        try:
+            ts = int(epoch)
+        except ValueError, TypeError, OverflowError:
+            return None
+        if ts <= 0 or ts == MISSING_LOCATION_TM:
+            return None
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+        except OSError, OverflowError, ValueError:
+            return None
 
     @staticmethod
     def _fix_sig(location: dict[str, Any] | None) -> dict[str, Any]:
@@ -1092,7 +1122,11 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
         self.poi = self.device.get(ATTR_TRACKER_POI, None)
         self.location_accuracy = self.device.get(ATTR_TRACKER_RAD, -1)
         self.locate_type = self.device.get("locateType", LocationType.UNKNOWN.value)
-        self.last_track_time = self.device.get("lastTrackTime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        # The shown position's age is the WATCH's own fix time, not our poll time (ADR 0007): expose
+        # the raw `tm` (epoch seconds) as an ISO-8601 UTC string the device_tracker/cards render as a
+        # relative age. Unknown must stay unknown -- fabricating `now()` here would make a stale pin
+        # read "just now", the exact lie ADR 0007 removes.
+        self.last_track_time = self._fix_time_iso(self.device.get("tm"))
 
     async def get_map(self, wuid: str) -> None:
         """Reverse-geocode the current fix to a human-readable address (cached when unchanged).

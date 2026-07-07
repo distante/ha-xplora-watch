@@ -12,7 +12,7 @@ from typing import Any, Optional, cast
 
 import aiohttp
 
-from .const import ALL_WATCH_FUNCTIONS, WatchFunction
+from .const import ALL_WATCH_FUNCTIONS, MISSING_LOCATION_TM, WatchFunction
 from .exception_classes import Error, ErrorMSG, LoginError
 from .gql_handler_async import GQLHandler
 from .model import Chats, ChatsNew, Data, SimpleChat, SmallChat, SmallChatList, User
@@ -325,17 +325,16 @@ class PyXploraApi(PyXplora):
         steps_info: dict[str, Any] = status.get("stepsInfo") or {}
 
         tm = location.get("tm")
-        last_track_time = datetime.fromtimestamp(tm).strftime("%Y-%m-%d %H:%M:%S") if tm else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         self.device[wuid] = {
             "getWatchAlarm": watch_alarm,
             "watch_battery": status.get("battery", -1),
             "watch_charging": location.get("isCharging", False),
             "locateType": location.get("locateType", LocationType.UNKNOWN.value),
-            "lastTrackTime": last_track_time,
-            # Raw fix timestamp (epoch seconds) kept alongside the formatted `lastTrackTime` so
-            # callers can detect when a fresh `askWatchLocate` actually moved the fix (see the
-            # coordinator's fresh-fix poll). `tm` is the field used to detect staleness.
+            # Raw fix timestamp (epoch seconds). The coordinator turns this into the shown fix time
+            # (ADR 0007) and uses it to detect when a fresh `askWatchLocate` actually moved the fix
+            # (see the coordinator's fresh-fix poll). No `now()` fabrication -- a missing `tm` stays
+            # unknown (None) rather than reading as a just-now fix.
             "tm": tm,
             "lat": location.get("lat", None),
             "lng": location.get("lng", None),
@@ -440,7 +439,7 @@ class PyXploraApi(PyXplora):
                 _watch_last_locate = location_raw.get("watchLastLocate", {})
                 if not _watch_last_locate:
                     return watch_location
-                _tm = 31532399 if _watch_last_locate.get("tm") is None else _watch_last_locate.get("tm")
+                _tm = MISSING_LOCATION_TM if _watch_last_locate.get("tm") is None else _watch_last_locate.get("tm")
                 _lat = _watch_last_locate.get("lat", "0.0")
                 _lng = _watch_last_locate.get("lng", "0.0")
                 _rad = _watch_last_locate.get("rad", -1)

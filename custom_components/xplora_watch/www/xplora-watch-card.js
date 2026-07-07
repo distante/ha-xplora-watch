@@ -1313,6 +1313,9 @@ const STATUS_META = {
   success: { color: "var(--success-color, #43a047)", icon: "mdi:check-circle", label: "Updated" },
   warning: { color: "var(--warning-color, #ffa600)", icon: "mdi:alert", label: "Watch didn't respond" },
   error: { color: "var(--error-color, #db4437)", icon: "mdi:close-circle", label: "Update failed" },
+  // Neutral map-banner state when there is no poll outcome to report (last_update unknown/disabled)
+  // -- carries the fix age without falsely claiming "Updated". Never produced by statusFromSensor.
+  unknown: { color: "var(--secondary-text-color, #888)", icon: "mdi:map-marker", label: "Location" },
 };
 
 // Map a `last_update` sensor state object to a status key, or null if unknown/not yet reported.
@@ -1339,6 +1342,31 @@ function relTime(ts) {
 function relTimeIso(iso) {
   const t = iso ? Date.parse(iso) : NaN;
   return isNaN(t) ? "" : relTime(t);
+}
+
+// The watch's fix time (ISO `last tracking`) from a device_tracker state object, or null. One
+// definition so every surface -- overview chip/banner AND the controls status line -- reads the
+// attribute the same way and can't drift (ADR 0007).
+function trackerFixIso(st) {
+  return (st && st.attributes && st.attributes["last tracking"]) || null;
+}
+
+// Shared basis for the header chip AND the map popup banner, so the two can never drift (ADR 0007).
+// STATUS is the poll outcome (the backend `last_update` sensor); the fix time is the WATCH's own
+// capture time (the tracker's ISO `last tracking` attribute) -- i.e. how old the shown position is,
+// NOT when we last polled. Each surface reads this one place and formats it its own way.
+export function fixAgeStatus(hass, entities) {
+  const lu = entities && entities.lastupdate ? hass.states[entities.lastupdate] : undefined;
+  const trk = entities && entities.tracker ? hass.states[entities.tracker] : undefined;
+  return { status: statusFromSensor(lu), fixIso: trackerFixIso(trk) };
+}
+
+// Banner phrasing for the fix age (ADR 0007 wording (i)): anchored to "location" so a relative age
+// can't be misread as "when the poll happened". Empty when the fix time is unknown -> caller omits.
+export function locationAgePhrase(fixIso) {
+  const rel = relTimeIso(fixIso);
+  if (!rel) return "";
+  return rel === "just now" ? "location just now" : `location from ${rel}`;
 }
 
 /**
@@ -1533,6 +1561,17 @@ class XploraWatchActionsCard extends HTMLElement {
     return found ? hass.states[found.entity_id] : null;
   }
 
+  // The watch's fix time (the device_tracker's ISO `last tracking` attribute), or null. Shared rule
+  // with the overview (ADR 0007): the status line's time is the fix age, not the poll time.
+  _trackerFixIso() {
+    const hass = this._hass;
+    const ents = hass.entities || {};
+    const devId = this._deviceId();
+    if (!devId) return null;
+    const found = Object.values(ents).find((e) => e.device_id === devId && roleOf(hass, e.entity_id) === "tracker");
+    return trackerFixIso(found && hass.states[found.entity_id]);
+  }
+
   async _awaitSensorChange(beforeStamp, timeoutMs) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -1600,11 +1639,12 @@ class XploraWatchActionsCard extends HTMLElement {
 
     const lu = this._lastUpdateState();
     const status = statusFromSensor(lu);
+    // Label/colour = poll outcome; time = fix age (ADR 0007), same as the overview chip/banner.
     const statusLine = status
       ? `<div class="last-status ${status}">
            <ha-icon icon="${STATUS_META[status].icon}"></ha-icon>
            <span class="ls-label">${STATUS_META[status].label}</span>
-           <span class="ls-when">${this._esc(relTimeIso(lu.last_updated))}</span>
+           <span class="ls-when">${this._esc(relTimeIso(this._trackerFixIso()))}</span>
          </div>`
       : "";
 
@@ -1826,8 +1866,9 @@ class XploraWatchOverviewCard extends HTMLElement {
     this._refreshing = false; // an on-render auto-refresh is in flight (drives the status-row spinner)
     this._modal = null; // popup host for the embedded alarm/silent management card
     this._embedded = null; // the <xplora-watch-card> shown in the popup (kept hass-live)
+    this._bannerFor = null; // live-recompute closure for the map popup's fix-age banner (set on open)
     this._onKeyDown = (ev) => {
-      if (ev.key === "Escape" && this._modal && !this._modal.hidden) this._closeCardPopup();
+      if (ev.key === "Escape" && this._isPopupOpen()) this._closeCardPopup();
     };
     // An embedded controls card (in the popup) fires this when an update finishes -- refresh the
     // header's last-update indicator even if the watch data itself didn't change.
@@ -1875,6 +1916,9 @@ class XploraWatchOverviewCard extends HTMLElement {
     // Keep the embedded management card live while its popup is open (regardless of the overview's
     // own re-render guard below).
     if (this._embedded) this._embedded.hass = hass;
+    // Keep the map popup's fix-age banner live too (ADR 0007): recompute it from the fresh state so
+    // the age above the map tracks background polls instead of freezing at the moment it opened.
+    if (this._bannerFor && this._isPopupOpen()) this._setBanner(this._bannerFor());
     const map = this._watchEntities();
     const sig =
       Object.values(map)
@@ -2074,7 +2118,10 @@ class XploraWatchOverviewCard extends HTMLElement {
 
     const addr = tracker && tracker.attributes["address"];
     const dist = tracker && this._dist(tracker.attributes["Home Distance (m)"]);
-    const lastTrack = tracker && this._fmtTime(tracker.attributes["last tracking"] || tracker.last_changed);
+    // Fix time only (ADR 0007): no `|| tracker.last_changed` fallback -- last_changed is the
+    // entity's zone-transition time, neither the fix nor the poll time, so showing it here would
+    // reintroduce the "which time is this?" ambiguity. Unknown fix -> no timestamp on the row.
+    const lastTrack = tracker && this._fmtTime(tracker.attributes["last tracking"]);
 
     // Status line: online dot + battery (+ charging bolt).
     const statusBits = [];
@@ -2088,16 +2135,17 @@ class XploraWatchOverviewCard extends HTMLElement {
     // Last-update outcome from the backend `last_update` sensor (covers manual + background polls).
     // While an on-render auto-refresh is in flight, show an "Updating…" spinner in its place; the
     // resolved chip returns once the refresh settles (the data beneath stays visible throughout).
-    const lu = st("lastupdate");
-    const luStatus = statusFromSensor(lu);
+    const { status: luStatus, fixIso } = fixAgeStatus(hass, map);
     if (this._refreshing) {
       statusBits.push(
         `<span class="upd refreshing" title="Updating…"><ha-icon class="spin" icon="mdi:refresh"></ha-icon>Updating…</span>`
       );
     } else if (luStatus) {
       const m = STATUS_META[luStatus];
+      // The icon/colour carry the poll outcome; the time is how old the shown FIX is (ADR 0007),
+      // NOT when we last polled. Empty (icon only) when the fix time is unknown.
       statusBits.push(
-        `<span class="upd ${luStatus}" title="${this._esc(m.label)}"><ha-icon icon="${m.icon}"></ha-icon>${this._esc(relTimeIso(lu.last_updated))}</span>`
+        `<span class="upd ${luStatus}" title="${this._esc(m.label)}"><ha-icon icon="${m.icon}"></ha-icon>${this._esc(relTimeIso(fixIso))}</span>`
       );
     }
 
@@ -2221,15 +2269,24 @@ class XploraWatchOverviewCard extends HTMLElement {
     this._card.querySelectorAll("[data-map]").forEach((el) => {
       const entity = el.getAttribute("data-map");
       el.addEventListener("click", () => {
-        // The map popup always shows when the last fix was taken (driven by the same backend
-        // `last_update` status as the header chip) plus a button to request a fresh one, so a
-        // stale position is never shown without saying so.
+        // The map popup shows the poll outcome (the backend `last_update` status, same as the header
+        // chip) plus how old the shown fix is (ADR 0007), and a button to request a fresh one -- so a
+        // stale position is never shown without saying so. The time is the WATCH's fix age, not our
+        // poll time; the status label alone reports the poll outcome (no second timestamp).
         const bannerFor = () => {
-          const lu = this._hass.states[map.lastupdate];
-          const status = statusFromSensor(lu) || "success";
-          const when = lu ? relTimeIso(lu.last_updated) : "";
-          return { status, text: `${STATUS_META[status].label}${when ? ` · ${when}` : ""}` };
+          const { status: rawStatus, fixIso } = fixAgeStatus(this._hass, map);
+          if (!rawStatus) {
+            // No poll outcome to report: don't claim "Updated". Show a neutral location banner that
+            // still carries the fix age, and don't diverge from the chip by inventing a success.
+            const age = relTimeIso(fixIso);
+            return { status: "unknown", text: `Location${age ? ` · ${age}` : ""}` };
+          }
+          const phrase = locationAgePhrase(fixIso);
+          return { status: rawStatus, text: `${STATUS_META[rawStatus].label}${phrase ? ` · ${phrase}` : ""}` };
         };
+        // Keep the banner live while the popup stays open: `set hass` recomputes it as background
+        // polls land, so the fix age above the map never freezes at open-time (ADR 0007).
+        this._bannerFor = bannerFor;
         // Refreshing presses the watch's own `update` button entity (same effect as the `see`
         // service) -- only available if it's enabled, like the controls popup's cog button.
         const updateBtn = this._buttonEntities().find((id) => roleOf(this._hass, id) === "update");
@@ -2340,9 +2397,16 @@ class XploraWatchOverviewCard extends HTMLElement {
     }
   }
 
+  // True while the popup host is mounted and visible -- the guard for Escape-to-close and live
+  // banner recomputes, in one place so the two conditions can't drift.
+  _isPopupOpen() {
+    return !!(this._modal && !this._modal.hidden);
+  }
+
   _closeCardPopup() {
     window.removeEventListener("keydown", this._onKeyDown);
     this._embedded = null;
+    this._bannerFor = null; // stop live banner recomputes once the map popup is closed
     if (this._modal) {
       this._modal.hidden = true;
       this._modal.innerHTML = "";
@@ -2773,6 +2837,7 @@ class XploraWatchOverviewCard extends HTMLElement {
       .map-banner.success { color: var(--success-color, #43a047); }
       .map-banner.warning { color: var(--warning-color, #ffa600); }
       .map-banner.error { color: var(--error-color, #db4437); }
+      .map-banner.unknown { color: var(--secondary-text-color, #888); }
       .map-banner-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .map-banner-refresh { flex: 0 0 auto; color: inherit; }
       @keyframes xplora-spin { to { transform: rotate(360deg); } }

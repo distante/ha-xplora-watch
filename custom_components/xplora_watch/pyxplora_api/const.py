@@ -76,3 +76,8 @@ class WatchFunction(StrEnum):
 
 # Convenience set meaning "fetch everything" -- the default for an unconstrained fetch.
 ALL_WATCH_FUNCTIONS: Final = frozenset(WatchFunction)
+
+# Placeholder epoch substituted for a location fix that carries no `tm`. Single source of truth so
+# the producer (loadWatchLocation) and the coordinator's defensive "treat as unknown" guard can't
+# drift (ADR 0007).
+MISSING_LOCATION_TM: Final = 31532399

@@ -237,7 +237,10 @@ class XploraDeviceTracker(XploraBaseEntity, TrackerEntity):
                 ATTR_SERVICE_USER: self.coordinator.username,
                 ATTR_TRACKER_DISTOHOME: distance_to_home,
                 ATTR_TRACKER_ADDR: (self.coordinator.data[self.watch_uid].get(ATTR_LOCATION_NAME, None) if distance_to_home else None),
-                ATTR_TRACKER_LAST_TRACK: (self.coordinator.data[self.watch_uid].get("lastTrackTime", None) if distance_to_home else None),
+                # Ungated from distance-to-home (ADR 0007): the fix time is the age of the shown
+                # position, so it must survive even at home (distance 0.0 is falsy) -- else the one
+                # place a stale pin most needs a "captured N min ago" label would blank it.
+                ATTR_TRACKER_LAST_TRACK: self.coordinator.data[self.watch_uid].get("lastTrackTime", None),
                 ATTR_TRACKER_IMEI: self.coordinator.data[self.watch_uid].get(ATTR_TRACKER_IMEI, None),
                 ATTR_TRACKER_POI: self.coordinator.data[self.watch_uid].get(ATTR_TRACKER_POI, None),
                 ATTR_TRACKER_LICENCE: self.coordinator.data[self.watch_uid].get(ATTR_TRACKER_LICENCE, None),
