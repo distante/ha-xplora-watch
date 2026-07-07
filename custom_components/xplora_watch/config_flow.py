@@ -72,7 +72,6 @@ from .const import (
     HISTORY_RETENTION_DAYS_MIN,
     HOME,
     HOME_SAFEZONE,
-    MANUFACTURER,
     MAPS,
     SCAN_INTERVAL_FUNCTIONS_OPTIONS,
     SCAN_INTERVAL_OPTIONS,
@@ -137,7 +136,7 @@ async def validate_input(hass: core.HomeAssistant, data: dict[str, Any]) -> dict
 
     # Return info that you want to store in the config entry. `username` is the Account display
     # name (`getUserName()`), surfaced so the following alias step can pre-fill its field with it.
-    return {"title": f"{MANUFACTURER}", "username": controller.getUserName()}
+    return {"username": controller.getUserName()}
 
 
 def validate_options_input(user_input: dict[str, Any]) -> dict[str, str]:
@@ -168,7 +167,6 @@ class XploraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # not bare annotations, so an out-of-order step entry degrades to empty carry-over (a clean flow
     # error) instead of an AttributeError on an attribute that was never assigned.
     _account_data: dict[str, Any] = {}
-    _account_title: str = ""
     _default_alias: str = ""
 
     @staticmethod
@@ -239,7 +237,6 @@ class XploraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _advance_to_alias(self, user_input: dict[str, Any], info: dict[str, str]) -> ConfigFlowResult:
         """Stash the validated credentials + display name, then move to the alias step."""
         self._account_data = user_input
-        self._account_title = info["title"]
         self._default_alias = info["username"]
         return self.async_show_form(
             step_id="alias",
@@ -261,8 +258,11 @@ class XploraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         default in one tap.
         """
         if user_input is not None:
-            data = {**self._account_data, CONF_ACCOUNT_ALIAS: user_input[CONF_ACCOUNT_ALIAS]}
-            return self.async_create_entry(title=self._account_title, data=data)
+            alias = user_input[CONF_ACCOUNT_ALIAS]
+            data = {**self._account_data, CONF_ACCOUNT_ALIAS: alias}
+            # Title the entry with the chosen alias so each account is distinguishable in the UI,
+            # rather than every entry reading the manufacturer name.
+            return self.async_create_entry(title=alias, data=data)
 
         return self.async_show_form(step_id="alias", data_schema=self._alias_schema(self._default_alias), last_step=True)
 

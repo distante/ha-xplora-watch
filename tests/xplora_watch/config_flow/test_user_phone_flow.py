@@ -56,7 +56,9 @@ async def test_user_phone_happy_path_creates_entry_with_alias(hass, mock_graphql
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_ACCOUNT_ALIAS: "Mom"})
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Xplora®"
+    # The entry title is the user-chosen alias, so multiple accounts are distinguishable in the
+    # UI instead of every entry reading "Xplora®".
+    assert result["title"] == "Mom"
     assert result["data"] == {**PHONE_USER_INPUT, CONF_ACCOUNT_ALIAS: "Mom"}
 
 
