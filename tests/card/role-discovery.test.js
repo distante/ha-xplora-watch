@@ -61,13 +61,13 @@ describe("overview role discovery (attribute-based, ADR 0005)", () => {
     const entities = {};
     // Both carry xplora_role "safezone"; only the binary_sensor is the in/out tile source. A role-only
     // (non-domain-scoped) match could let the device_tracker shadow it and show the wrong value.
-    ent(states, entities, "binary_sensor.zone_flag", "safezone", "on"); // on -> "Inside"
+    ent(states, entities, "binary_sensor.zone_flag", "safezone", "on"); // SAFETY alert: on -> "Outside"
     ent(states, entities, "device_tracker.zone_home", "safezone", "not_home");
 
     const el = mount(states, entities);
 
     const tileValues = [...el.shadowRoot.querySelectorAll(".tile-value")].map((t) => t.textContent);
-    expect(tileValues).toContain("Inside"); // from the binary_sensor "on"
-    expect(tileValues).not.toContain("Outside"); // the device_tracker did NOT shadow it
+    expect(tileValues).toContain("Outside"); // from the binary_sensor "on" (on == outside-alert)
+    expect(tileValues).not.toContain("not_home"); // the device_tracker did NOT shadow it
   });
 });

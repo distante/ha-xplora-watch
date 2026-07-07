@@ -1799,6 +1799,9 @@ class XploraWatchOverviewCard extends HTMLElement {
     "binary_sensor.charging": "charging",
     "binary_sensor.state": "online",
     "binary_sensor.safezone": "safezone",
+    // Watch-reported name of the safezone the watch is inside (unknown while outside every
+    // safezone). The safe-zone tile merges it with the in/out binary sensor above.
+    "sensor.current_safezone": "safezone_label",
     "device_tracker.tracker": "tracker",
   };
 
@@ -2139,7 +2142,11 @@ class XploraWatchOverviewCard extends HTMLElement {
       let value = s.state;
       let unit = s.attributes.unit_of_measurement || "";
       if (t.role === "safezone") {
-        value = s.state === "on" ? "Inside" : "Outside";
+        // The binary sensor is a SAFETY alert: "on" means the watch is OUTSIDE every safezone.
+        // While inside, the current-safezone sensor (when enabled and reporting) names the
+        // watch-reported zone; unknown just means "inside, but no zone name known".
+        const label = st("safezone_label");
+        value = s.state === "on" ? "Outside" : this._usable(label) ? label.state : "Inside";
         unit = "";
       }
       // Alarms/silents open the full management card in a popup; messages open the chat card;

@@ -20,6 +20,7 @@ from .const import (
     ATTR_LAST_UPDATE_STATUS,
     ATTR_LAST_UPDATE_TIME,
     ATTR_LOCATION_HISTORY,
+    ATTR_SAFEZONE_LABEL,
     ATTR_SILENT,
     ATTR_TRACKER_LAT,
     ATTR_TRACKER_LNG,
@@ -35,6 +36,7 @@ from .const import (
     LOC_HISTORY_ATTR_WINDOW_HOURS,
     SENSOR_ALARMS,
     SENSOR_BATTERY,
+    SENSOR_CURRENT_SAFEZONE,
     SENSOR_DISTANCE,
     SENSOR_LAST_UPDATE,
     SENSOR_LOCATION_HISTORY,
@@ -85,6 +87,14 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         key=SENSOR_DISTANCE,
         native_unit_of_measurement=UnitOfLength.METERS,
         device_class=SensorDeviceClass.DISTANCE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    # Watch-reported current safezone label, unknown while outside every safezone (ADR 0006). No
+    # ENUM device class: safezone names are free-form user data, not a fixed options set.
+    SensorEntityDescription(
+        key=SENSOR_CURRENT_SAFEZONE,
+        icon="mdi:shield-home",
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
@@ -198,14 +208,22 @@ class XploraSensor(XploraBaseEntity, SensorEntity):
             return
 
         # has_entity_name: name only the role; the device supplies the "Kid One Watch" prefix.
-        self._attr_name: str = description.key.replace("_", " ").title()
+        # `current_safezone` is localized via translations (entity.sensor.current_safezone.name --
+        # "Current safe zone" reads better than the generic title-cased key); the other sensors
+        # keep their code-derived English names.
+        if description.key == SENSOR_CURRENT_SAFEZONE:
+            self._attr_translation_key = description.key
+            display_name = "Current safe zone"  # debug-log only; UI name comes from translations
+        else:
+            self._attr_name: str = description.key.replace("_", " ").title()
+            display_name = self._attr_name
         self.entity_id = ENTITY_ID_FORMAT.format(self.branded_object_id(description.key))
 
         # unique_id is kept unchanged to preserve existing entities' history/customizations.
         self._attr_unique_id = (
             f"{ward.get(CONF_NAME)}_{ATTR_WATCH}_{description.key}_{wuid}_{coordinator.user_id}".replace(" ", "_").replace("-", "_").lower()
         )
-        _LOGGER.debug("Updating sensor: %s | Typ: %s | Watch_ID ...%s", self._attr_name, description.key, wuid[25:])
+        _LOGGER.debug("Updating sensor: %s | Typ: %s | Watch_ID ...%s", display_name, description.key, wuid[25:])
 
     @property
     def native_value(self) -> StateType:
@@ -232,6 +250,17 @@ class XploraSensor(XploraBaseEntity, SensorEntity):
         if self.entity_description.key == SENSOR_LAST_UPDATE:
             status: StateType = self.coordinator.data[self.watch_uid].get(ATTR_LAST_UPDATE_STATUS, None)
             return status
+        if self.entity_description.key == SENSOR_CURRENT_SAFEZONE:
+            # Pure watch report (ADR 0006): the watch's own name for the safezone it is inside,
+            # unknown when it reports being outside every safezone -- never a literal
+            # pseudo-state, which could collide with a user-chosen zone name. The
+            # `home_is_safezone` option deliberately plays no part here; it only shapes the
+            # in/out binary sensor.
+            watch_data = self.coordinator.data[self.watch_uid]
+            if watch_data.get("isSafezone", True):  # inverted alert flag: True == outside
+                return None
+            label: str | None = watch_data.get(ATTR_SAFEZONE_LABEL) or None
+            return label
         return None
 
     @property

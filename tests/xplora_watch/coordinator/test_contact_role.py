@@ -20,6 +20,7 @@ from custom_components.xplora_watch.const import (
     GUARDIAN_ONLY_KEYS,
     SENSOR_ALARMS,
     SENSOR_BATTERY,
+    SENSOR_CURRENT_SAFEZONE,
     SENSOR_DISTANCE,
     SENSOR_LAST_UPDATE,
     SENSOR_LOCATION_HISTORY,
@@ -34,13 +35,15 @@ WUID = "watch-1"
 
 
 def test_guardian_only_keys_lists_every_restricted_entity_kind() -> None:
-    # Battery, distance, alarm/silent lists and location-history sensors; charging and safe-zone
-    # binary sensors; and the reboot/shutdown/refresh-functions buttons -- the kinds a Contact
-    # never populates or may not control. (Device-tracker entities have no description key and are
-    # gated at the platform level, so they are intentionally absent from this set.)
+    # Battery, distance, alarm/silent lists, location-history and current-safezone sensors;
+    # charging and safe-zone binary sensors; and the reboot/shutdown/refresh-functions buttons --
+    # the kinds a Contact never populates or may not control. (Device-tracker entities have no
+    # description key and are gated at the platform level, so they are intentionally absent from
+    # this set.)
     assert GUARDIAN_ONLY_KEYS == frozenset(
         {
             SENSOR_BATTERY,
+            SENSOR_CURRENT_SAFEZONE,
             SENSOR_DISTANCE,
             SENSOR_ALARMS,
             SENSOR_SILENTS,

@@ -65,6 +65,37 @@ async def test_data_loop_inverts_is_in_safe_zone(coordinator: XploraDataUpdateCo
     assert data[DEFAULT_WUID]["isSafezone"] is False
 
 
+async def test_data_loop_carries_watch_reported_safezone_label(coordinator: XploraDataUpdateCoordinator) -> None:
+    """The watch-reported `safeZoneLabel` (already in every location payload) lands in the data.
+
+    The `current_safezone` sensor reads it; no extra API call is involved -- both `deviceList`
+    and `WatchLastLocate` carry the field (the default fixtures report "Home").
+    """
+    await coordinator.controller.setDevices([DEFAULT_WUID])
+    data = await coordinator.data_loop([DEFAULT_WUID], message_limit=10, remove_message=False)
+
+    assert data[DEFAULT_WUID]["safeZoneLabel"] == "Home"
+
+
+async def test_data_loop_overlays_fresh_fix_safezone_label(coordinator: XploraDataUpdateCoordinator, graphql_operations) -> None:
+    """A fresh `WatchLastLocate` fix's `safeZoneLabel` wins over the stale `deviceList` one.
+
+    Mirrors the battery/position overlay: deviceList reports the *last stored* state ("Home"),
+    while the forced fresh fix says the watch moved into the "School" zone -- the data must
+    carry "School".
+    """
+    fresh = make_watch_last_locate_payload()
+    fresh["watchLastLocate"]["safeZoneLabel"] = "School"
+    # Advance the fresh fix's tm past deviceList's (1700000000) so the poll detects a new fix.
+    fresh["watchLastLocate"]["tm"] = 1700000600
+    graphql_operations["WatchLastLocate"] = {"data": fresh}
+
+    await coordinator.controller.setDevices([DEFAULT_WUID])
+    data = await coordinator.data_loop([DEFAULT_WUID], message_limit=10, remove_message=False)
+
+    assert data[DEFAULT_WUID]["safeZoneLabel"] == "School"
+
+
 async def test_data_loop_offline_when_device_list_reports_offline(coordinator: XploraDataUpdateCoordinator, graphql_operations) -> None:
     """deviceList's onlineStatus="OFFLINE" makes the watch offline."""
     graphql_operations["deviceList"] = {"data": make_device_list_payload(online_status="OFFLINE")}

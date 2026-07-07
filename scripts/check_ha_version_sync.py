@@ -84,7 +84,8 @@ def write_hacs_homeassistant_version(version: str) -> None:
 
     hacs_data = json.loads(HACS_JSON_PATH.read_text(encoding="utf-8"))
     hacs_data[HACS_HOMEASSISTANT_KEY] = version
-    HACS_JSON_PATH.write_text(f"{json.dumps(hacs_data, indent=4)}\n", encoding="utf-8")
+    # ensure_ascii=False keeps the literal "®" in the integration name instead of "®".
+    HACS_JSON_PATH.write_text(f"{json.dumps(hacs_data, indent=4, ensure_ascii=False)}\n", encoding="utf-8")
 
 
 #

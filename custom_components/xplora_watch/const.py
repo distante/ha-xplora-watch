@@ -78,6 +78,17 @@ ATTR_TRACKER_LICENCE: Final = "licence"
 ATTR_TRACKER_LNG: Final = "lng"
 ATTR_TRACKER_POI: Final = "poi"
 ATTR_TRACKER_RAD: Final = "rad"
+# The Xplora safezone's own name on a per-safezone tracker. Kept as a state attribute (not the
+# entity state): the tracker no longer overrides the deprecated `location_name` property (HA
+# removes it in 2027.7), so its state is HA-computed from its coordinates (`not_home` or a
+# containing HA zone).
+ATTR_TRACKER_SAFEZONE_NAME: Final = "safezone_name"
+
+# Key under each watch's coordinator data holding the watch-reported name of the safezone it is
+# currently in (`safeZoneLabel` -- carried by every location payload, so surfacing it costs no
+# extra API call). The `current_safezone` sensor reads it; the watch's own in/out verdict stays
+# in `isSafezone` (inverted, see `data_loop`).
+ATTR_SAFEZONE_LABEL: Final = "safeZoneLabel"
 
 ATTR_WATCH: Final = "watch"
 
@@ -135,6 +146,11 @@ SENSOR_XCOIN: Final = "xcoin"
 SENSOR_ALARMS: Final = "alarms"
 SENSOR_SILENTS: Final = "silents"
 SENSOR_LAST_UPDATE: Final = "last_update"
+# Watch-reported name of the safezone the watch is currently inside (`safeZoneLabel`), or unknown
+# when it is outside every safezone -- deliberately never a literal pseudo-state, which could
+# collide with a user's zone name (ADR 0006). A pure watch report: the `home_is_safezone` option
+# affects only the in/out binary sensor, not this label.
+SENSOR_CURRENT_SAFEZONE: Final = "current_safezone"
 # Optional, opt-in (disabled-by-default) sensor surfacing the watch's accumulated location
 # history. The state is the number of points in the bounded recent window; the points
 # themselves live in attributes (bounded -- see below) and in a persistent Store (the full,
@@ -172,6 +188,7 @@ BUTTON_REFRESH_FUNCTIONS: Final = "refresh_functions"
 GUARDIAN_ONLY_KEYS: Final[frozenset[str]] = frozenset(
     {
         SENSOR_BATTERY,
+        SENSOR_CURRENT_SAFEZONE,
         SENSOR_DISTANCE,
         SENSOR_ALARMS,
         SENSOR_SILENTS,

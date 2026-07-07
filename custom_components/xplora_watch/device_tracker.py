@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from homeassistant.components.device_tracker import ENTITY_ID_FORMAT, SourceType, TrackerEntity
-from homeassistant.components.device_tracker.const import ATTR_BATTERY, ATTR_LOCATION_NAME
+from homeassistant.components.device_tracker.const import ATTR_LOCATION_NAME
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ID, CONF_NAME
 from homeassistant.core import HomeAssistant
@@ -25,6 +25,7 @@ from .const import (
     ATTR_TRACKER_LNG,
     ATTR_TRACKER_POI,
     ATTR_TRACKER_RAD,
+    ATTR_TRACKER_SAFEZONE_NAME,
     ATTR_WATCH,
     CONF_WATCHES,
     DOMAIN,
@@ -142,18 +143,20 @@ class XploraSafezoneTracker(XploraBaseEntity, TrackerEntity, RestoreEntity):
         return accuracy
 
     @property
-    def location_name(self) -> str | None:
-        """Return a location name for the current location of the device."""
-        name: str | None = self._safezone[CONF_NAME]
-        return name
-
-    @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return state attributes that should be added to SAFEZONE_STATE."""
+        """Return state attributes that should be added to SAFEZONE_STATE.
+
+        The safezone's name lives here (`safezone_name`), not in the entity state: the deprecated
+        `location_name` override is gone (HA 2027.7 removal), so the state is HA-computed from the
+        zone's coordinates (`not_home`, or the name of a containing HA zone).
+        """
         data = super().extra_state_attributes or {}
         return dict(
             data,
-            **{ATTR_TRACKER_ADDR: self._safezone[ATTR_TRACKER_ADDR]},
+            **{
+                ATTR_TRACKER_ADDR: self._safezone[ATTR_TRACKER_ADDR],
+                ATTR_TRACKER_SAFEZONE_NAME: self._safezone[CONF_NAME],
+            },
         )
 
 
@@ -191,12 +194,6 @@ class XploraDeviceTracker(XploraBaseEntity, TrackerEntity):
         self._attr_entity_picture = image
 
     @property
-    def battery_level(self) -> int | None:
-        """Return battery value of the device."""
-        battery: int | None = self.coordinator.data[self.watch_uid].get(ATTR_BATTERY, None)
-        return battery
-
-    @property
     def latitude(self) -> float | None:
         """Return latitude value of the device."""
         lat: float | None = self.coordinator.data[self.watch_uid].get(ATTR_TRACKER_LAT, None)
@@ -218,12 +215,6 @@ class XploraDeviceTracker(XploraBaseEntity, TrackerEntity):
         """Return the gps accuracy of the device."""
         accuracy: int = self.coordinator.data[self.watch_uid].get("location_accuracy", 0)
         return accuracy
-
-    @property
-    def address(self) -> str | None:
-        """Return a location name for the current location of the device."""
-        addr: str | None = self.coordinator.data[self.watch_uid].get(ATTR_LOCATION_NAME, None)
-        return addr
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

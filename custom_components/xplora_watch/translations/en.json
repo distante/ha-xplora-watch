@@ -4,6 +4,11 @@
       "refresh_functions": {
         "name": "Refresh Alarms & Silent Times"
       }
+    },
+    "sensor": {
+      "current_safezone": {
+        "name": "Current safe zone"
+      }
     }
   },
   "exceptions": {

@@ -16,7 +16,9 @@ from collections.abc import Generator
 from typing import Any
 
 import pytest
+from aiohttp import ClientResponse
 from aioresponses import CallbackResult, aioresponses
+from aioresponses import core as aioresponses_core
 from homeassistant.const import (
     ATTR_LATITUDE,
     ATTR_LONGITUDE,
@@ -54,6 +56,31 @@ from .fixtures.rest_payloads import (
     OPENCAGEDATA_REVERSE_GEOCODE,
     OPENSTREETMAP_REVERSE_GEOCODE,
 )
+
+
+class _NoopStreamWriter:
+    """Stub for aiohttp 3.14's required `ClientResponse(stream_writer=...)` argument.
+
+    With `writer=None` (which aioresponses always passes for a mocked, "already sent" request),
+    `ClientResponse.__init__` only reads `stream_writer.output_size` -- nothing else is touched.
+    """
+
+    output_size = 0
+
+
+class _CompatClientResponse(ClientResponse):
+    """aioresponses 0.7.9 predates aiohttp 3.14, whose `ClientResponse.__init__` grew a required
+    `stream_writer` keyword; every mocked request would otherwise raise TypeError. Default it here
+    and rebind the module global aioresponses resolves its default response class from. Drop this
+    shim (and the rebind below) once aioresponses ships aiohttp 3.14 support.
+    """
+
+    def __init__(self, method: str, url: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("stream_writer", _NoopStreamWriter())
+        super().__init__(method, url, **kwargs)
+
+
+aioresponses_core.ClientResponse = _CompatClientResponse  # type: ignore[misc]
 
 
 @pytest.fixture(autouse=True)

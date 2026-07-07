@@ -103,6 +103,33 @@ async def test_offline_account_refuses_control_actions_but_online_ones_accept() 
     assert await online.reboot(DEMO_WUID) is True  # a healthy watch still accepts
 
 
+async def test_primary_demo_account_reports_a_named_safezone_scenario() -> None:
+    """The primary demo watch reports being INSIDE a named safezone, network-free.
+
+    This is what makes the `current_safezone` sensor (and the safezone card tile) exercisable
+    with no servers: the deviceList status and the fresh-fix overlay agree on the label, and a
+    matching safezone definition exists so the per-zone tracker appears too. The other demo
+    accounts stay outside every zone (empty label) so both sensor states can be seen live.
+    """
+    primary = await _demo_controller(DEMO_ACCOUNT_EMAIL)
+
+    device = primary.getDevice(DEMO_WUID)
+    assert device.get("isInSafeZone") is True
+    assert device.get("safeZoneLabel") == "LEGOLAND"
+
+    location = await primary.loadWatchLocation(DEMO_WUID)
+    assert location["watch_last_location"]["safeZoneLabel"] == "LEGOLAND"
+
+    zones = await primary.getWatchSafeZones(DEMO_WUID)
+    assert [zone["name"] for zone in zones] == ["LEGOLAND"]
+
+    # Contrast: a non-primary demo account stays outside every safezone (unknown-state path).
+    second = await _demo_controller(DEMO_SECOND_PARENT_ACCOUNT_EMAIL)
+    assert second.getDevice(DEMO_SECOND_PARENT_WUID).get("isInSafeZone") is False
+    assert second.getDevice(DEMO_SECOND_PARENT_WUID).get("safeZoneLabel") == ""
+    assert await second.getWatchSafeZones(DEMO_SECOND_PARENT_WUID) == []
+
+
 def _demo_entry(hass: HomeAssistant, email: str, wuid: str) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,

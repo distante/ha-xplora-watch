@@ -4,6 +4,11 @@
       "refresh_functions": {
         "name": "Actualizar alarmas y tiempos de silencio"
       }
+    },
+    "sensor": {
+      "current_safezone": {
+        "name": "Zona segura actual"
+      }
     }
   },
   "exceptions": {

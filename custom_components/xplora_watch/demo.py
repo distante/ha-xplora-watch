@@ -90,6 +90,11 @@ class _DemoProfile:
     path; the others keep text-only chats so a shared media cache can't collide across accounts.
     ``online`` False models a switched-off/offline watch: the deviceList reports it offline and every
     control action is *refused* (returns ``False``), so a control service surfaces ``watch_offline``.
+    ``safe_zone_label`` non-empty models a watch currently INSIDE a safezone of that name: every
+    location payload reports ``isInSafeZone``/``safeZoneLabel`` accordingly and a matching safezone
+    definition is served, so the `current_safezone` sensor, the safezone card tile and the per-zone
+    tracker are all exercisable network-free. Empty (the default) keeps the watch outside every
+    zone -- the sensor's unknown-state path.
     """
 
     user_id: str
@@ -108,6 +113,7 @@ class _DemoProfile:
     xcoin: int
     has_voice: bool
     online: bool = True
+    safe_zone_label: str = ""
 
 
 _PROFILES: Final[dict[str, _DemoProfile]] = {
@@ -127,6 +133,8 @@ _PROFILES: Final[dict[str, _DemoProfile]] = {
         steps=DEMO_STEPS,
         xcoin=DEMO_XCOIN,
         has_voice=True,
+        # Patrick is inside the LEGOLAND safezone, so the safezone entities have live demo data.
+        safe_zone_label="LEGOLAND",
     ),
     DEMO_SECOND_PARENT_ACCOUNT_EMAIL: _DemoProfile(
         user_id="demo_second_parent_account",
@@ -273,8 +281,8 @@ class DemoPyXploraApi(PyXploraApi):
                     "lng": profile.lng,
                     "isCharging": False,
                     "locateType": LocationType.GPS.value,
-                    "isInSafeZone": False,
-                    "safeZoneLabel": "",
+                    "isInSafeZone": bool(profile.safe_zone_label),
+                    "safeZoneLabel": profile.safe_zone_label,
                     "poi": profile.poi,
                     "city": profile.city,
                     "province": profile.province,
@@ -331,8 +339,26 @@ class DemoPyXploraApi(PyXploraApi):
         ]
 
     async def getWatchSafeZones(self, wuid: str) -> list[dict[str, Any]] | FetchError:
-        """No demo safe zones configured."""
-        return []
+        """One safezone matching the profile's `safe_zone_label` scenario (none when outside).
+
+        Keeps the demo data coherent: a watch reporting "inside <label>" also serves the matching
+        safezone definition, so the disabled-by-default per-zone tracker can be enabled and shows
+        the zone (with its `safezone_name` attribute) on the map.
+        """
+        profile = self._profile
+        if not profile.safe_zone_label:
+            return []
+        return [
+            {
+                "vendorId": f"demo-safezone-{profile.wuid}",
+                "groupName": profile.safe_zone_label,
+                "name": profile.safe_zone_label,
+                "lat": str(profile.lat),
+                "lng": str(profile.lng),
+                "rad": 300,
+                "address": f"{profile.poi}, {profile.city}",
+            }
+        ]
 
     async def getWatches(self, wuid: str) -> dict[str, Any]:
         """Synthetic hardware info; `getSWInfo` (unused by the integration) is stubbed separately."""
@@ -364,8 +390,8 @@ class DemoPyXploraApi(PyXploraApi):
             "province": profile.province,
             "country": profile.country,
             "locateType": LocationType.GPS.value,
-            "isInSafeZone": False,
-            "safeZoneLabel": "",
+            "isInSafeZone": bool(profile.safe_zone_label),
+            "safeZoneLabel": profile.safe_zone_label,
             "battery": profile.battery,
             "isCharging": False,
         }
@@ -379,8 +405,8 @@ class DemoPyXploraApi(PyXploraApi):
             "province": profile.province,
             "country": profile.country,
             "locateType": LocationType.GPS.value,
-            "isInSafeZone": False,
-            "safeZoneLabel": "",
+            "isInSafeZone": bool(profile.safe_zone_label),
+            "safeZoneLabel": profile.safe_zone_label,
             "watch_battery": profile.battery,
             "watch_charging": False,
             "watch_last_location": watch_last_location,

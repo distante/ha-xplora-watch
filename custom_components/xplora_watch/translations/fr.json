@@ -4,6 +4,11 @@
       "refresh_functions": {
         "name": "Actualiser alarmes et plages silencieuses"
       }
+    },
+    "sensor": {
+      "current_safezone": {
+        "name": "Zone de sécurité actuelle"
+      }
     }
   },
   "exceptions": {

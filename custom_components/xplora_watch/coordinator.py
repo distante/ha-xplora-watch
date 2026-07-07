@@ -34,6 +34,7 @@ from .const import (
     ATTR_LAST_UPDATE_STATUS,
     ATTR_LAST_UPDATE_TIME,
     ATTR_LOCATION_HISTORY,
+    ATTR_SAFEZONE_LABEL,
     ATTR_TRACKER_ADDR,
     ATTR_TRACKER_IMEI,
     ATTR_TRACKER_LAT,
@@ -121,6 +122,7 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
     battery: int = -1
     is_charging: bool = False
     is_safezone: bool = False
+    safe_zone_label: str = ""
     is_online: bool = False
     device: dict[str, Any] = {}
     username: str
@@ -871,6 +873,10 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
             # binary_sensor with device_class SAFETY, where `on` means "problem/unsafe". So
             # `isInSafeZone == True` -> sensor off (safe), outside the zone -> sensor on (alert).
             self.is_safezone = False if self.device.get("isInSafeZone", False) else True
+            # The watch-reported name of the safezone it is currently in (pure watch report --
+            # the `home_is_safezone` option never touches it). The `current_safezone` sensor
+            # reads this together with `isSafezone` above.
+            self.safe_zone_label = self.device.get(ATTR_SAFEZONE_LABEL) or ""
 
             self.is_online = (
                 True
@@ -974,7 +980,15 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
         if fresh.get("watch_battery") is not None:
             self.device["watch_battery"] = fresh["watch_battery"]
         self.device["watch_charging"] = fresh.get("watch_charging", self.device.get("watch_charging", False))
-        for key in (ATTR_TRACKER_LAT, ATTR_TRACKER_LNG, ATTR_TRACKER_RAD, ATTR_TRACKER_POI, "locateType", "isInSafeZone"):
+        for key in (
+            ATTR_TRACKER_LAT,
+            ATTR_TRACKER_LNG,
+            ATTR_TRACKER_RAD,
+            ATTR_TRACKER_POI,
+            "locateType",
+            "isInSafeZone",
+            ATTR_SAFEZONE_LABEL,
+        ):
             if watch_last_location.get(key) is not None:
                 self.device[key] = watch_last_location[key]
         if fresh.get("tm"):
@@ -1418,6 +1432,7 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
                 "isCharging": self.is_charging if self.battery != -1 else None,
                 "isOnline": self.is_online,
                 "isSafezone": self.is_safezone,
+                ATTR_SAFEZONE_LABEL: self.safe_zone_label,
                 "alarm": self.alarm,
                 "silent": self.silent,
                 "step_day": self._step_day,

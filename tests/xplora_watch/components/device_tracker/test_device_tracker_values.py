@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from homeassistant.const import ATTR_BATTERY_LEVEL
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -16,16 +17,21 @@ def _make_tracker(hass: HomeAssistant, config_entry: MockConfigEntry, coordinato
     return XploraDeviceTracker(hass, config_entry, coordinator, DEFAULT_WUID, WARD, "https://example.com/icon.png")
 
 
-async def test_battery_level_and_lat_lng(
+async def test_tracker_exposes_position_but_no_deprecated_battery_or_address(
     hass: HomeAssistant, mock_config_entry_phone: MockConfigEntry, coordinator_with_data: XploraDataUpdateCoordinator
 ) -> None:
     tracker = _make_tracker(hass, mock_config_entry_phone, coordinator_with_data)
 
-    assert tracker.battery_level == 80
     assert tracker.latitude == 52.52
     assert tracker.longitude == 13.405
     assert tracker.location_accuracy == 50
-    assert tracker.address == "Teststrasse 1, 12345 Berlin, Germany"
+    # The deprecated `battery_level` TrackerEntity override is gone (HA 2027.7 removal); the
+    # enabled-by-default battery sensor is the replacement, so the tracker state no longer
+    # carries a battery_level attribute.
+    assert ATTR_BATTERY_LEVEL not in tracker.state_attributes
+    # `address` was dead code -- TrackerEntity never read the property. The resolved address
+    # still flows via the `address` extra state attribute (see the attribute tests below).
+    assert not hasattr(tracker, "address")
 
 
 async def test_extra_state_attributes_includes_distance_to_home_when_lat_lng_present(

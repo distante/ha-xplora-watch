@@ -10,6 +10,7 @@ from custom_components.xplora_watch.const import (
     DOMAIN,
     SENSOR_ALARMS,
     SENSOR_BATTERY,
+    SENSOR_CURRENT_SAFEZONE,
     SENSOR_DISTANCE,
     SENSOR_LAST_UPDATE,
     SENSOR_LOCATION_HISTORY,
@@ -44,12 +45,20 @@ async def test_async_setup_entry_creates_all_sensors(
 
     await async_setup_entry(hass, mock_config_entry_phone, capture_entities)
 
-    # 6 value sensors (XploraSensor) + 2 list sensors (XploraListSensor) + 1 history sensor.
-    assert len(captured) == 9
+    # 7 value sensors (XploraSensor) + 2 list sensors (XploraListSensor) + 1 history sensor.
+    assert len(captured) == 10
     value_keys = {e.entity_description.key for e in captured if isinstance(e, XploraSensor)}
     list_keys = {e.entity_description.key for e in captured if isinstance(e, XploraListSensor)}
     history_keys = {e.entity_description.key for e in captured if isinstance(e, XploraHistorySensor)}
-    assert value_keys == {SENSOR_BATTERY, SENSOR_STEP_DAY, SENSOR_XCOIN, SENSOR_MESSAGE, SENSOR_DISTANCE, SENSOR_LAST_UPDATE}
+    assert value_keys == {
+        SENSOR_BATTERY,
+        SENSOR_STEP_DAY,
+        SENSOR_XCOIN,
+        SENSOR_MESSAGE,
+        SENSOR_DISTANCE,
+        SENSOR_LAST_UPDATE,
+        SENSOR_CURRENT_SAFEZONE,
+    }
     assert list_keys == {SENSOR_ALARMS, SENSOR_SILENTS}
     assert history_keys == {SENSOR_LOCATION_HISTORY}
 
@@ -82,6 +91,7 @@ async def test_only_battery_enabled_by_default(
         SENSOR_ALARMS,
         SENSOR_SILENTS,
         SENSOR_LOCATION_HISTORY,
+        SENSOR_CURRENT_SAFEZONE,
     }
 
 

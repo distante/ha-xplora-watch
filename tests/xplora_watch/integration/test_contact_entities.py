@@ -32,6 +32,7 @@ CONTACT_KEPT_ENTITY_IDS = {
 # Guardian-only entities a Contact must NOT get (the device tracker is covered by the domain check).
 GUARDIAN_ONLY_ENTITY_IDS = {
     "sensor.xplora_kid_one_watch_battery_parent_name",
+    "sensor.xplora_kid_one_watch_current_safezone_parent_name",
     "sensor.xplora_kid_one_watch_distance_parent_name",
     "sensor.xplora_kid_one_watch_alarms_parent_name",
     "sensor.xplora_kid_one_watch_silents_parent_name",
