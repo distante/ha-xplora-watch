@@ -481,6 +481,44 @@ from the **Unread** tile of the overview card too.
 
 ![Chat card](images/images/chat_card.png)
 
+#### Map card
+
+A standalone card that shows **one watch's current location** on a map, right on your dashboard —
+no popup needed. Add it from the card picker (**Xplora Watch Map**) or via YAML, pointing it at any
+watch entity or the watch's device:
+
+![Map card](images/images/map_card.png)
+
+```yaml
+type: custom:xplora-watch-map-card
+entity: device_tracker.kid_one_watch_tracker   # any watch entity, OR:
+# device: 1a2b3c…                              # the watch's device id
+title: Kid One                                 # optional (default: the watch's name)
+aspect_ratio: "16:9"                           # optional (default "16:9")
+show_header: true                              # optional (set false for just the map)
+```
+
+The card carries:
+
+- A **fix-age banner** that reports the poll outcome (Updated / Watch didn't respond / Update failed)
+  and, separately, **how old the shown position is** — so a stale pin is never mistaken for a live
+  one.
+- A **reload** button that forces the watch to report a **fresh** position (it presses the watch's
+  **Update** button).
+- An **expand** button that opens the same map full-screen — the identical map (and reload button)
+  you get by tapping the location row on the [overview card](#overview).
+
+If you have enabled *Refresh data when a card is shown* (off by default), the map card pulls a fresh
+fix on first render — and if you also have the overview card on the same view, the two share a single
+request, so adding the map card doesn't increase how often the watch is contacted.
+
+> [!NOTE]
+> **The map card is empty or has no reload button.** The card needs the watch's **Update** button
+> entity enabled — enable it in Settings → Devices & Services → the watch → the disabled *Update*
+> entity. Reload presses that button to fetch a fresh position. A **Contact** account (not the
+> watch's Guardian) has no location data at all, so its map card stays empty by design — see
+> [Account types](#account-types).
+
 ---
 
 ## Location history

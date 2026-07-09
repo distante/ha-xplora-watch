@@ -77,6 +77,9 @@ const HISTORY_RECENT_DAYS = 3;
 const HISTORY_MAP_ZOOM_DEFAULT = 17;
 // Initial zoom for the single-point position popup (HA `map` card `default_zoom`); higher = closer.
 const POSITION_MAP_ZOOM = 18;
+// Default aspect ratio for the standalone map card's inline map (passed to HA's `map` card). Makes
+// the map responsive by construction -- a narrow phone column and a wide panel both look right.
+const MAP_CARD_DEFAULT_ASPECT = "16:9";
 
 // How long an optimistically-rendered outgoing message is kept before it's dropped if the server
 // never echoes it back. The Xplora backend usually indexes a sent message within a second or two,
@@ -1369,6 +1372,124 @@ export function locationAgePhrase(fixIso) {
   return rel === "just now" ? "location just now" : `location from ${rel}`;
 }
 
+// Module-level HTML escaper, shared by the generic popup host and the map card. Each card also has
+// its own `_esc` method (kept as-is); this exists so module-level helpers don't reach into an
+// instance.
+function escapeHtml(v) {
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    // Also escape the single quote: the map card interpolates values into a single-quoted CSS
+    // `url('…')`, so an apostrophe would otherwise break out of the string (defense in depth).
+    .replace(/'/g, "&#39;");
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Generic full-screen (or compact) popup host. Extracted from the overview card so BOTH it and the
+ * map card can reuse it (ADR 0008): it mounts ANY card element in a modal overlay and keeps it
+ * hass-live. It is deliberately dumb about what it mounts -- the map's banner / reload / fix-age
+ * logic lives in the map card now, NOT here. `fill` makes the popup take most of the screen and
+ * stretch its content to full height (the map); compact popups (alarm/silent, controls, chat) size
+ * to their content.
+ * ------------------------------------------------------------------------------------------- */
+const POPUP_HOST_CSS = `
+  .modal-host { position: fixed; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+  .modal-host[hidden] { display: none; }
+  .backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.46); }
+  .card-popup { position: relative; z-index: 1; width: 100%; max-width: 480px; max-height: 100%; display: flex; flex-direction: column; }
+  .card-popup.fill { max-width: 1000px; height: 100%; }
+  .popup-bar { display: flex; justify-content: flex-end; margin-bottom: 4px; flex: 0 0 auto; }
+  .popup-close { color: #fff; }
+  .popup-slot { overflow: auto; }
+  .card-popup.fill .popup-slot { flex: 1; min-height: 0; display: flex; }
+  .card-popup.fill .popup-slot > * { flex: 1; min-height: 0; }
+  .popup-error { color: var(--error-color); background: var(--card-background-color); padding: 16px; border-radius: 12px; }
+`;
+
+class CardPopupHost {
+  // `root` is the shadow root to mount into; `getHass` returns the owner's current hass so the
+  // embedded card can be built and kept live without the host storing a stale copy.
+  constructor(root, getHass) {
+    this._root = root;
+    this._getHass = getHass;
+    this._modal = null;
+    this._embedded = null; // the card element currently shown (kept hass-live), or null
+    this._styleInjected = false;
+    this._openGen = 0; // bumped on every open()/close() so a stale async builder can't clobber a newer popup
+    this._onKeyDown = (ev) => {
+      if (ev.key === "Escape" && this.isOpen()) this.close();
+    };
+  }
+
+  isOpen() {
+    return !!(this._modal && !this._modal.hidden);
+  }
+
+  // Push a fresh hass to the embedded card while the popup is open (the owner calls this from its
+  // own `set hass`). The embedded card recomputes itself -- e.g. a map card re-derives its banner.
+  setHass(hass) {
+    if (this._embedded) this._embedded.hass = hass;
+  }
+
+  // Open a popup hosting the card returned by `builder` (sync or async). Close wiring is set up
+  // before the (possibly async) build so the popup can be dismissed while it loads.
+  async open(builder, opts = {}) {
+    const hass = this._getHass();
+    if (!hass) return;
+    if (!this._styleInjected) {
+      const style = document.createElement("style");
+      style.textContent = POPUP_HOST_CSS;
+      this._root.appendChild(style);
+      this._styleInjected = true;
+    }
+    if (!this._modal) {
+      this._modal = document.createElement("div");
+      this._modal.className = "modal-host";
+      this._root.appendChild(this._modal);
+    }
+    // A fresh open supersedes any still-pending build from an earlier open()/close() (the async
+    // builder below re-checks this token, so it can't append into a slot that has been replaced).
+    const gen = ++this._openGen;
+    this._modal.hidden = false;
+    this._modal.innerHTML = `
+      <div class="backdrop" data-close></div>
+      <div class="card-popup${opts.fill ? " fill" : ""}">
+        <div class="popup-bar">
+          <ha-icon-button class="popup-close" data-close label="Close"><ha-icon icon="mdi:close"></ha-icon></ha-icon-button>
+        </div>
+        <div class="popup-slot"></div>
+      </div>`;
+    const slot = this._modal.querySelector(".popup-slot");
+    this._modal.querySelectorAll("[data-close]").forEach((el) => el.addEventListener("click", () => this.close()));
+    window.addEventListener("keydown", this._onKeyDown);
+
+    try {
+      const card = await builder();
+      if (gen !== this._openGen || this._modal.hidden) return; // superseded by a newer open/close, or dismissed
+      card.hass = hass;
+      if (opts.fill) card.style.height = "100%";
+      this._embedded = card;
+      slot.appendChild(card);
+    } catch (e) {
+      if (gen === this._openGen && !this._modal.hidden) {
+        slot.innerHTML = `<div class="popup-error">Could not open: ${escapeHtml(e && e.message)}</div>`;
+      }
+    }
+  }
+
+  close() {
+    this._openGen++; // abort any in-flight build so it can't mount after we've closed
+    window.removeEventListener("keydown", this._onKeyDown);
+    this._embedded = null;
+    if (this._modal) {
+      this._modal.hidden = true;
+      this._modal.innerHTML = "";
+    }
+  }
+}
+
 /**
  * Xplora® Watch controls card.
  *
@@ -1864,14 +1985,12 @@ class XploraWatchOverviewCard extends HTMLElement {
     this._deviceId = null;
     this._autoRefreshDone = false; // guard so "refresh on render" fires once per card instance
     this._refreshing = false; // an on-render auto-refresh is in flight (drives the status-row spinner)
-    this._modal = null; // popup host for the embedded alarm/silent management card
-    this._embedded = null; // the <xplora-watch-card> shown in the popup (kept hass-live)
-    this._bannerFor = null; // live-recompute closure for the map popup's fix-age banner (set on open)
-    this._onKeyDown = (ev) => {
-      if (ev.key === "Escape" && this._isPopupOpen()) this._closeCardPopup();
-    };
-    // An embedded controls card (in the popup) fires this when an update finishes -- refresh the
-    // header's last-update indicator even if the watch data itself didn't change.
+    // Generic popup host (ADR 0008): mounts the alarm/silent, chat, controls, history and map cards
+    // full-screen or compact. The map's banner / reload / fix-age logic lives in the map card, so
+    // this host is deliberately generic -- it just mounts and keeps the embedded card hass-live.
+    this._popup = new CardPopupHost(this.shadowRoot, () => this._hass);
+    // An embedded card in the popup (controls, or the map card on reload) fires this when an update
+    // finishes -- refresh the header's last-update indicator even if the watch data didn't change.
     this._onUpdateStatus = () => this._render();
   }
 
@@ -1880,7 +1999,7 @@ class XploraWatchOverviewCard extends HTMLElement {
   }
 
   disconnectedCallback() {
-    window.removeEventListener("keydown", this._onKeyDown);
+    this._popup.close();
     this.removeEventListener("xplora-update-status", this._onUpdateStatus);
   }
 
@@ -1913,12 +2032,9 @@ class XploraWatchOverviewCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._config) return;
-    // Keep the embedded management card live while its popup is open (regardless of the overview's
-    // own re-render guard below).
-    if (this._embedded) this._embedded.hass = hass;
-    // Keep the map popup's fix-age banner live too (ADR 0007): recompute it from the fresh state so
-    // the age above the map tracks background polls instead of freezing at the moment it opened.
-    if (this._bannerFor && this._isPopupOpen()) this._setBanner(this._bannerFor());
+    // Keep the embedded popup card live while its popup is open (regardless of the overview's own
+    // re-render guard below). A map card in the popup re-derives its own fix-age banner from this.
+    this._popup.setHass(hass);
     const map = this._watchEntities();
     const sig =
       Object.values(map)
@@ -1976,18 +2092,6 @@ class XploraWatchOverviewCard extends HTMLElement {
     return Object.values(ents)
       .filter((e) => e.device_id === this._deviceId && e.entity_id.startsWith("button."))
       .map((e) => e.entity_id);
-  }
-
-  // Poll for the `last_update` sensor to reflect a just-requested refresh (it arrives via
-  // websocket asynchronously after the button press resolves).
-  async _awaitLastUpdateChange(entityId, beforeStamp, timeoutMs) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      await new Promise((r) => setTimeout(r, 250));
-      const lu = entityId ? this._hass.states[entityId] : null;
-      if (lu && lu.last_updated !== beforeStamp) return true;
-    }
-    return false;
   }
 
   _deviceName() {
@@ -2237,7 +2341,7 @@ class XploraWatchOverviewCard extends HTMLElement {
         // "functions" fetch, which defaults to OFF (refreshed on demand) -- so kick off a refresh
         // here so the popup reflects the watch's current state instead of the last cached values.
         this._refreshFunctions(entity);
-        this._openPopup(() => {
+        this._popup.open(() => {
           const c = document.createElement("xplora-watch-card");
           c.setConfig({ entity });
           return c;
@@ -2249,7 +2353,7 @@ class XploraWatchOverviewCard extends HTMLElement {
       el.addEventListener("click", () => {
         // The chat card reads `entry_id`/`wuid` from the message sensor and auto-fetches the thread
         // on first open if nothing is cached, so no pre-refresh is needed here.
-        this._openPopup(() => {
+        this._popup.open(() => {
           const c = document.createElement("xplora-watch-chat-card");
           c.setConfig({ entity });
           return c;
@@ -2263,165 +2367,38 @@ class XploraWatchOverviewCard extends HTMLElement {
         // refresh so the sensor's "points kept" count reflects today's track, then open the map-track
         // popup (fill mode); the popup itself pulls each day fresh over the websocket regardless.
         this._refreshFunctions(entity);
-        this._openPopup(() => this._buildHistoryView(entity), { fill: true });
+        this._popup.open(() => this._buildHistoryView(entity), { fill: true });
       });
     });
     this._card.querySelectorAll("[data-map]").forEach((el) => {
       const entity = el.getAttribute("data-map");
       el.addEventListener("click", () => {
-        // The map popup shows the poll outcome (the backend `last_update` status, same as the header
-        // chip) plus how old the shown fix is (ADR 0007), and a button to request a fresh one -- so a
-        // stale position is never shown without saying so. The time is the WATCH's fix age, not our
-        // poll time; the status label alone reports the poll outcome (no second timestamp).
-        const bannerFor = () => {
-          const { status: rawStatus, fixIso } = fixAgeStatus(this._hass, map);
-          if (!rawStatus) {
-            // No poll outcome to report: don't claim "Updated". Show a neutral location banner that
-            // still carries the fix age, and don't diverge from the chip by inventing a success.
-            const age = relTimeIso(fixIso);
-            return { status: "unknown", text: `Location${age ? ` · ${age}` : ""}` };
-          }
-          const phrase = locationAgePhrase(fixIso);
-          return { status: rawStatus, text: `${STATUS_META[rawStatus].label}${phrase ? ` · ${phrase}` : ""}` };
-        };
-        // Keep the banner live while the popup stays open: `set hass` recomputes it as background
-        // polls land, so the fix age above the map never freezes at open-time (ADR 0007).
-        this._bannerFor = bannerFor;
-        // Refreshing presses the watch's own `update` button entity (same effect as the `see`
-        // service) -- only available if it's enabled, like the controls popup's cog button.
-        const updateBtn = this._buttonEntities().find((id) => roleOf(this._hass, id) === "update");
-        this._openPopup(
-          async () => {
-            const helpers = await window.loadCardHelpers();
-            // No aspect_ratio: let the map stretch to the full popup height in `fill` mode.
-            // `default_zoom` keeps the initial view from zooming in too far on a single fix.
-            return helpers.createCardElement({ type: "map", entities: [entity], default_zoom: POSITION_MAP_ZOOM });
+        // The location row opens the SAME standalone map card full-screen (ADR 0008): one component
+        // renders the inline card and the popup, so the fix-age banner (ADR 0007) + reload can't
+        // drift between them. The map card resolves its own tracker / last_update / Update button by
+        // role, so bind it by device when known (else by the tapped tracker id). Fill mode stretches
+        // the map and suppresses the card's own header + expand button (no recursive re-open).
+        this._popup.open(
+          () => {
+            const c = document.createElement("xplora-watch-map-card");
+            c.fill = true;
+            c.setConfig(this._deviceId ? { device: this._deviceId } : { entity });
+            return c;
           },
-          {
-            fill: true,
-            banner: bannerFor(),
-            onRefresh: updateBtn
-              ? async () => {
-                  const before = this._hass.states[map.lastupdate];
-                  await this._hass.callService("button", "press", { entity_id: updateBtn });
-                  await this._awaitLastUpdateChange(map.lastupdate, before ? before.last_updated : null, 5000);
-                  this.dispatchEvent(new CustomEvent("xplora-update-status", { bubbles: true, composed: true }));
-                  return bannerFor();
-                }
-              : null,
-          }
+          { fill: true },
         );
       });
     });
     const ctrlBtn = this._card.querySelector("[data-controls]");
     if (ctrlBtn) {
       ctrlBtn.addEventListener("click", () =>
-        this._openPopup(() => {
+        this._popup.open(() => {
           const c = document.createElement("xplora-watch-actions-card");
           c.setConfig({ entities: controls });
           return c;
-        })
+        }),
       );
     }
-  }
-
-  // Open a popup hosting another card, kept hass-live via set hass. `builder` returns the card
-  // element (sync or async) -- used for our custom cards (alarm/silent, controls) and HA's
-  // built-in map card. Close wiring is set up before the (possibly async) build so the popup can
-  // be dismissed while it loads.
-  async _openPopup(builder, opts = {}) {
-    if (!this._hass) return;
-    if (!this._modal) {
-      this._modal = document.createElement("div");
-      this._modal.className = "modal-host";
-      this.shadowRoot.appendChild(this._modal);
-    }
-    this._modal.hidden = false;
-    // `fill` makes the popup take most of the screen and stretch its content to full height
-    // (used for the map); other popups stay compact and size to their content. `banner` shows a
-    // status strip above the content (the map uses it to always show when the position was last
-    // updated); `onRefresh`, if given, adds a button to the banner that requests a fresh fix and
-    // updates the banner text in place without closing the popup.
-    const b = opts.banner;
-    const refreshBtn = opts.onRefresh
-      ? `<ha-icon-button class="map-banner-refresh" data-refresh label="Refresh location"><ha-icon icon="mdi:refresh"></ha-icon></ha-icon-button>`
-      : "";
-    const bannerHtml =
-      b && STATUS_META[b.status]
-        ? `<div class="map-banner ${b.status}">
-             <ha-icon icon="${STATUS_META[b.status].icon}"></ha-icon>
-             <span class="map-banner-text">${this._esc(b.text)}</span>
-             ${refreshBtn}
-           </div>`
-        : "";
-    this._modal.innerHTML = `
-      <div class="backdrop" data-close></div>
-      <div class="card-popup${opts.fill ? " fill" : ""}">
-        <div class="popup-bar">
-          <ha-icon-button class="popup-close" data-close label="Close"><ha-icon icon="mdi:close"></ha-icon></ha-icon-button>
-        </div>
-        ${bannerHtml}
-        <div class="popup-slot"></div>
-      </div>`;
-    const slot = this._modal.querySelector(".popup-slot");
-    this._modal.querySelectorAll("[data-close]").forEach((el) => el.addEventListener("click", () => this._closeCardPopup()));
-    window.addEventListener("keydown", this._onKeyDown);
-
-    const refreshEl = this._modal.querySelector("[data-refresh]");
-    if (refreshEl && opts.onRefresh) {
-      refreshEl.addEventListener("click", async () => {
-        if (refreshEl.disabled) return;
-        refreshEl.disabled = true;
-        const icon = refreshEl.querySelector("ha-icon");
-        if (icon) icon.classList.add("spin");
-        try {
-          const next = await opts.onRefresh();
-          if (this._modal.hidden) return; // closed while refreshing
-          if (next) this._setBanner(next);
-        } finally {
-          if (icon) icon.classList.remove("spin");
-          refreshEl.disabled = false;
-        }
-      });
-    }
-
-    try {
-      const card = await builder();
-      if (this._modal.hidden) return; // closed during the async build
-      card.hass = this._hass;
-      if (opts.fill) card.style.height = "100%";
-      this._embedded = card;
-      slot.appendChild(card);
-    } catch (e) {
-      if (!this._modal.hidden) slot.innerHTML = `<div class="popup-error">Could not open: ${this._esc(e && e.message)}</div>`;
-    }
-  }
-
-  // True while the popup host is mounted and visible -- the guard for Escape-to-close and live
-  // banner recomputes, in one place so the two conditions can't drift.
-  _isPopupOpen() {
-    return !!(this._modal && !this._modal.hidden);
-  }
-
-  _closeCardPopup() {
-    window.removeEventListener("keydown", this._onKeyDown);
-    this._embedded = null;
-    this._bannerFor = null; // stop live banner recomputes once the map popup is closed
-    if (this._modal) {
-      this._modal.hidden = true;
-      this._modal.innerHTML = "";
-    }
-  }
-
-  // Update an already-open popup's banner text/icon/colour in place (used after a refresh).
-  _setBanner(b) {
-    const el = this._modal && this._modal.querySelector(".map-banner");
-    if (!el || !STATUS_META[b.status]) return;
-    el.className = `map-banner ${b.status}`;
-    const icon = el.querySelector("ha-icon");
-    if (icon) icon.setAttribute("icon", STATUS_META[b.status].icon);
-    const span = el.querySelector(".map-banner-text");
-    if (span) span.textContent = b.text;
   }
 
   // ---- Location history (map track) ----------------------------------------------------------
@@ -2566,7 +2543,7 @@ class XploraWatchOverviewCard extends HTMLElement {
     // Generation token: a newer day selection (or a closed popup) makes an in-flight render stale
     // so it doesn't overwrite the latest result when its awaits resolve out of order.
     const gen = (body.__histGen = (body.__histGen || 0) + 1);
-    const stale = () => body.__histGen !== gen || !this._modal || this._modal.hidden;
+    const stale = () => body.__histGen !== gen || !this._popup.isOpen();
     body.innerHTML = `<div class="hist-msg">Loading…</div>`;
     const points = await this._fetchDay(historyEntity, dayKey);
     if (stale()) return;
@@ -2647,7 +2624,7 @@ class XploraWatchOverviewCard extends HTMLElement {
   // highlights the days with data. The watch's API only serves the last few days, so the selectable
   // set is the cached days (archived via the daily `fetch_history` service) UNION the always-available
   // recent ones; the arrows step through that set and the calendar disables every other day. Defaults
-  // to today (always fetched fresh). Returned to `_openPopup` (fill mode).
+  // to today (always fetched fresh). Returned to the popup host (fill mode).
   async _buildHistoryView(historyEntity) {
     const wrap = document.createElement("div");
     wrap.className = "hist-wrap";
@@ -2819,33 +2796,9 @@ class XploraWatchOverviewCard extends HTMLElement {
       .tile-value .unit { font-size: 0.8rem; font-weight: 400; color: var(--secondary-text-color); }
       .tile-label { font-size: 0.78rem; color: var(--secondary-text-color); }
 
-      /* ---- embedded management card popup ---- */
-      .modal-host { position: fixed; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
-      .modal-host[hidden] { display: none; }
-      .backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.46); }
-      /* Compact by default (alarm/silent manager, controls); the map opts into a large, full-height
-         popup via the .fill class. */
-      .card-popup { position: relative; z-index: 1; width: 100%; max-width: 480px; max-height: 100%; display: flex; flex-direction: column; }
-      .card-popup.fill { max-width: 1000px; height: 100%; }
-      .popup-bar { display: flex; justify-content: flex-end; margin-bottom: 4px; flex: 0 0 auto; }
-      .popup-close { color: #fff; }
-      .map-banner { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 6px;
-        border-radius: 10px; font-size: 0.92rem; font-weight: 500;
-        background: var(--card-background-color, var(--ha-card-background, #fff));
-        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
-      .map-banner ha-icon { --mdc-icon-size: 18px; }
-      .map-banner.success { color: var(--success-color, #43a047); }
-      .map-banner.warning { color: var(--warning-color, #ffa600); }
-      .map-banner.error { color: var(--error-color, #db4437); }
-      .map-banner.unknown { color: var(--secondary-text-color, #888); }
-      .map-banner-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .map-banner-refresh { flex: 0 0 auto; color: inherit; }
+      /* The popup host injects its own generic overlay CSS (.modal-host / .card-popup / .popup-*)
+         into this shadow root (ADR 0008); only the keyframes the header spinner shares live here. */
       @keyframes xplora-spin { to { transform: rotate(360deg); } }
-      .map-banner-refresh ha-icon.spin { animation: xplora-spin 0.9s linear infinite; }
-      .popup-slot { overflow: auto; }
-      .card-popup.fill .popup-slot { flex: 1; min-height: 0; display: flex; }
-      .card-popup.fill .popup-slot > * { flex: 1; min-height: 0; }
-      .popup-error { color: var(--error-color); background: var(--card-background-color); padding: 16px; border-radius: 12px; }
 
       /* ---- location history (map track) popup ---- */
       .hist-wrap { display: flex; flex-direction: column; min-height: 0; height: 100%;
@@ -2908,6 +2861,481 @@ window.customCards.push({
   type: "xplora-watch-overview-card",
   name: "Xplora Watch Overview",
   description: "App-like summary of a watch: online, battery, last location, steps, coins, messages and more.",
+  preview: true,
+});
+
+// Fix-age banner for the map card (ADR 0007): the STATUS (colour/icon) is the poll outcome from the
+// `last_update` sensor; the age in the TEXT is the WATCH's own fix time, never our poll time. When
+// there is no poll outcome to report we show a neutral "Location" state carrying just the age, so the
+// banner never falsely claims "Updated". One place so the inline card and the full-screen popup (the
+// same component) can't drift.
+function mapBanner(hass, entities) {
+  const { status: rawStatus, fixIso } = fixAgeStatus(hass, entities);
+  if (!rawStatus) {
+    const age = relTimeIso(fixIso);
+    return { status: "unknown", text: `Location${age ? ` · ${age}` : ""}` };
+  }
+  const phrase = locationAgePhrase(fixIso);
+  return { status: rawStatus, text: `${STATUS_META[rawStatus].label}${phrase ? ` · ${phrase}` : ""}` };
+}
+
+/**
+ * Xplora® Watch location map card.
+ *
+ * Renders ONE watch's current position inline on a dashboard (ADR 0008): HA's built-in `map` card,
+ * a fix-age banner (ADR 0007), a reload button that forces a fresh fix by pressing the watch's
+ * Update button, and an expand button that opens the SAME card full-screen. It is Guardian-only --
+ * a Contact account has no location data (ref:XW-009) -- and says so honestly. The overview card's
+ * location-row popup mounts this very component in fill mode, so the inline and full-screen views
+ * can never drift.
+ *
+ * Config:
+ *   type: custom:xplora-watch-map-card
+ *   entity / device   - any watch entity, or the device id (one is required)
+ *   title             - overrides the displayed watch name (default: the watch's device name)
+ *   aspect_ratio      - map aspect ratio passed to HA's map card (default "16:9")
+ *   show_header       - show the avatar + name header (default true)
+ */
+class XploraWatchMapCard extends HTMLElement {
+  // "<domain>.<xplora_role>" -> this card's logical role (ADR 0005): keyed on the integration-emitted
+  // role attribute, not the entity_id, so account-tokened / renamed ids still resolve.
+  static ROLE_BY_DOMAIN_ROLE = {
+    "device_tracker.tracker": "tracker",
+    "sensor.last_update": "lastupdate",
+    "button.update": "updateBtn",
+  };
+
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hass = null;
+    this._config = null;
+    this._built = false;
+    this._fill = false; // internal: set true by the popup host before mounting (full-screen mode)
+    this._ent = {}; // resolved entities keyed by logical role
+    this._deviceId = null;
+    this._sig = "";
+    this._mapEl = null; // the embedded HA `map` card element (built once, kept hass-live)
+    this._mapKey = null; // rebuild key for the embedded map (tracker id + aspect/fill)
+    this._mapGen = 0; // generation token so a superseded async map build can't overwrite a newer one
+    this._autoRefreshDone = false; // guard so "refresh on render" fires once per card instance
+    this._reloading = false; // a reload is in flight (drives the spinner + guards a double press)
+    this._popup = new CardPopupHost(this.shadowRoot, () => this._hass);
+  }
+
+  // Internal fill-mode flag, set by the popup host before mounting (never a config key). In fill
+  // mode the card stretches the map to the popup height and suppresses its own header + expand
+  // button, so the full-screen popup can't recursively re-open itself (ADR 0008).
+  set fill(v) {
+    this._fill = !!v;
+    if (this._built && this._hass) this._render();
+  }
+
+  get fill() {
+    return this._fill;
+  }
+
+  setConfig(config) {
+    if (!config || (!config.entity && !config.device)) {
+      throw new Error("xplora-watch-map-card: define `entity` (any watch entity) or `device`.");
+    }
+    this._config = config;
+    this._sig = ""; // force a rebuild on the next hass push
+    if (this._hass) this._render();
+  }
+
+  static getStubConfig(hass) {
+    const ids = hass && hass.states ? Object.keys(hass.states) : [];
+    const tracker = ids.find((id) => id.startsWith("device_tracker.") && roleOf(hass, id) === "tracker");
+    const any = ids.find((id) => id.includes("xplora") && id.includes("_watch_"));
+    return { entity: tracker || any || "device_tracker.xplora_watch_tracker" };
+  }
+
+  getCardSize() {
+    return 6; // header + banner + a map roughly the height of the overview card
+  }
+
+  disconnectedCallback() {
+    this._resetMap(); // bump _mapGen so an in-flight map build can't mount into a detached shadow root
+    this._popup.close();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._config) return;
+    this._popup.setHass(hass); // keep an expanded (fill-mode) popup live
+    if (this._mapEl) this._mapEl.hass = hass; // keep the embedded map's marker current without a rebuild
+    const ent = this._resolveEntities();
+    const sig = this._signature(ent);
+    if (!this._built || sig !== this._sig) {
+      this._sig = sig;
+      this._render();
+    }
+    this._maybeRefreshOnRender();
+  }
+
+  get hass() {
+    return this._hass;
+  }
+
+  // Discover the watch's tracker / last-update / update-button entities from the registry, given any
+  // one watch entity (or the device id). Placed by (domain, integration-emitted `xplora_role`), never
+  // by parsing the entity_id (ADR 0005). A disabled Update button has no state -> roleOf() is
+  // undefined -> it is not discovered, which is exactly the "reload only when enabled" rule.
+  _resolveEntities() {
+    const hass = this._hass;
+    const conf = this._config;
+    const ents = (hass && hass.entities) || {};
+    let deviceId = conf.device || null;
+    if (!deviceId && conf.entity && ents[conf.entity]) deviceId = ents[conf.entity].device_id;
+    this._deviceId = deviceId;
+
+    const map = {};
+    const place = (id) => {
+      const role = XploraWatchMapCard.ROLE_BY_DOMAIN_ROLE[`${id.split(".")[0]}.${roleOf(hass, id)}`];
+      if (role) map[role] = id;
+    };
+    if (deviceId) {
+      Object.values(ents).forEach((e) => {
+        if (e.device_id === deviceId) place(e.entity_id);
+      });
+    }
+    // Fallback when the registry isn't exposed: at least map the configured entity itself.
+    if (Object.keys(map).length === 0 && conf.entity) place(conf.entity);
+    return map;
+  }
+
+  // A re-render is warranted when any resolved entity's state/last_updated changed, the device name
+  // changed, or fill mode flipped -- HA pushes a fresh `hass` on ANY system change, so we filter.
+  _signature(ent) {
+    const hass = this._hass;
+    return (
+      Object.values(ent)
+        .map((id) => {
+          const s = hass.states[id];
+          return s ? `${id}=${s.state}@${s.last_updated}` : `${id}=∅`;
+        })
+        .join("|") +
+      `|${this._deviceName()}|${this._fill ? "fill" : "inline"}`
+    );
+  }
+
+  _deviceName() {
+    if (this._config && this._config.title) return this._config.title;
+    const dev = this._deviceId && this._hass.devices && this._hass.devices[this._deviceId];
+    if (dev) return dev.name_by_user || dev.name || "Watch";
+    return "Watch";
+  }
+
+  _usable(stateObj) {
+    return stateObj && stateObj.state !== "unavailable" && stateObj.state !== "unknown" && stateObj.state !== "";
+  }
+
+  // The tracker's current coordinates, or null when there is no usable fix. A device_tracker with no
+  // fix drops its latitude/longitude attributes, so absence means "no position" -- we must never
+  // render the `map` card without coordinates (it would silently centre on Home, ADR 0008).
+  _coords(trk) {
+    const lat = trk && trk.attributes ? trk.attributes.latitude : undefined;
+    const lng = trk && trk.attributes ? trk.attributes.longitude : undefined;
+    if (lat == null || lng == null || !isFinite(Number(lat)) || !isFinite(Number(lng))) return null;
+    return { lat: Number(lat), lng: Number(lng) };
+  }
+
+  _showHeader() {
+    // Fill mode is the full-screen popup -- the watch context is already obvious there, so the header
+    // (like the old popup) is suppressed; inline it is shown unless the user opts out.
+    return !this._fill && !(this._config && this._config.show_header === false);
+  }
+
+  _headerHtml(trk) {
+    if (!this._showHeader()) return "";
+    const picture = trk && trk.attributes && trk.attributes.entity_picture;
+    const avatar = picture
+      ? `<div class="map-avatar" style="background-image:url('${this._esc(picture)}')"></div>`
+      : `<div class="map-avatar fallback"><ha-icon icon="mdi:watch"></ha-icon></div>`;
+    return `<div class="map-header">
+        ${avatar}
+        <div class="map-name">${this._esc(this._deviceName())}</div>
+      </div>`;
+  }
+
+  // True when a device_tracker entity EXISTS in the registry for this watch's device -- regardless of
+  // whether it has pushed state yet. Distinguishes a Guardian whose tracker is merely warming up (it
+  // is in the registry) from a Contact watch, for which the integration creates NO tracker at all
+  // (ref:XW-009). Used to pick the permanent Contact message vs the transient "waiting" state.
+  _hasTrackerEntity() {
+    const ents = (this._hass && this._hass.entities) || {};
+    if (!this._deviceId) return false;
+    return Object.values(ents).some((e) => e.device_id === this._deviceId && e.entity_id.startsWith("device_tracker."));
+  }
+
+  // True when the registry has loaded AND lists at least one entity for this watch's device. This is
+  // the positive evidence the Contact verdict needs: an empty/not-yet-loaded `hass.entities` (common
+  // in the first frames after connect) is otherwise indistinguishable from "device genuinely has no
+  // tracker", and a `device:`-bound Guardian would flash the permanent Contact message on cold start.
+  _deviceHasEntities() {
+    const ents = (this._hass && this._hass.entities) || {};
+    if (!this._deviceId) return false;
+    return Object.values(ents).some((e) => e.device_id === this._deviceId);
+  }
+
+  _render() {
+    if (!this._built) {
+      const style = document.createElement("style");
+      style.textContent = this._css();
+      this.shadowRoot.appendChild(style);
+      this._card = document.createElement("ha-card");
+      this.shadowRoot.appendChild(this._card);
+      this._built = true;
+    }
+
+    const hass = this._hass;
+    const ent = (this._ent = this._resolveEntities());
+    const trk = ent.tracker ? hass.states[ent.tracker] : undefined;
+
+    // No usable tracker discovered: figure out WHY so we show the right message (ADR 0008).
+    if (!ent.tracker) {
+      this._resetMap();
+      let msg;
+      let cls = "map-empty";
+      if (this._hasTrackerEntity()) {
+        // Guardian tracker exists but hasn't pushed state yet -- transient, retry on the next push.
+        msg = "Locating…";
+      } else if (this._deviceHasEntities()) {
+        // Registry loaded and this device has entities but NO tracker: a Contact account has no
+        // location data at all (ref:XW-009). Permanent -- no reload can conjure a tracker, so none
+        // is offered (ADR 0008). Gated on `_deviceHasEntities` (not just `_deviceId`) so an empty /
+        // not-yet-loaded registry doesn't misread a real Guardian as a Contact on cold start.
+        msg = "Location isn't available for this account type.";
+        cls = "map-empty contact";
+      } else if (this._config.entity && entityMissing(hass, this._config.entity)) {
+        // Bound to an entity that isn't in the registry -- a mis-configured card (ADR 0008).
+        msg = `Entity ${this._config.entity} not found — edit the card and pick a watch entity.`;
+        cls = "map-empty error";
+      } else {
+        // Device known but its entities (or the registry) haven't loaded yet -- transient.
+        msg = "Locating…";
+      }
+      this._card.innerHTML = `${this._headerHtml(undefined)}<div class="map-body"><div class="${cls}">${this._esc(msg)}</div></div>`;
+      return;
+    }
+
+    const coords = this._coords(trk);
+    const banner = mapBanner(hass, ent);
+    const meta = STATUS_META[banner.status] || STATUS_META.unknown;
+    // Reload is offered ONLY when the Update button is enabled (a disabled button has no state, so
+    // it is never discovered) -- there is no honest reload without it (ADR 0008). Expand opens the
+    // same card full-screen; it is suppressed in fill mode (no recursive re-open) and when there is
+    // no map worth enlarging (no coordinates).
+    // The spinner/disabled state is derived from `this._reloading` (an instance flag), NOT set
+    // imperatively on the DOM node, so it survives a re-render triggered by an unrelated background
+    // `hass` push mid-reload -- which would otherwise swap in a fresh, enabled button and let the
+    // user fire a second overlapping press.
+    const reloadBtn = ent.updateBtn
+      ? `<ha-icon-button class="map-reload" data-reload label="Refresh location"${this._reloading ? " disabled" : ""}><ha-icon icon="mdi:refresh"${this._reloading ? ' class="spin"' : ""}></ha-icon></ha-icon-button>`
+      : "";
+    const expandBtn =
+      coords && !this._fill
+        ? `<ha-icon-button class="map-expand" data-expand label="Expand"><ha-icon icon="mdi:arrow-expand"></ha-icon></ha-icon-button>`
+        : "";
+    const bannerHtml = `
+      <div class="map-banner ${banner.status}">
+        <ha-icon icon="${meta.icon}"></ha-icon>
+        <span class="map-banner-text">${this._esc(banner.text)}</span>
+        ${reloadBtn}${expandBtn}
+      </div>`;
+
+    this._card.innerHTML = `${this._headerHtml(trk)}${bannerHtml}<div class="map-body"></div>`;
+
+    const reloadEl = this._card.querySelector("[data-reload]");
+    if (reloadEl) reloadEl.addEventListener("click", () => this._reload());
+    const expandEl = this._card.querySelector("[data-expand]");
+    if (expandEl) expandEl.addEventListener("click", () => this._expand());
+
+    const body = this._card.querySelector(".map-body");
+    if (coords) {
+      this._ensureMapEl(body);
+    } else {
+      // Guardian with a tracker but no fix yet: transient, keep the reload button live so the first
+      // fix can be requested. NEVER render the `map` card without coordinates (ADR 0008).
+      this._resetMap();
+      body.innerHTML = `<div class="map-empty">Location unavailable</div>`;
+    }
+  }
+
+  // Drop any embedded map so a later coords-less render can't leave a stale marker around.
+  _resetMap() {
+    this._mapEl = null;
+    this._mapKey = null;
+    this._mapGen++;
+  }
+
+  _aspectRatio() {
+    return (this._config && this._config.aspect_ratio) || MAP_CARD_DEFAULT_ASPECT;
+  }
+
+  // Build (once) and mount HA's built-in `map` card for the tracker, swapping it in over a
+  // placeholder. Rebuilt only when the tracker id or the aspect/fill mode changes -- a plain hass
+  // push updates the existing map's marker (via `set hass`) without resetting the pan/zoom.
+  _ensureMapEl(body) {
+    const key = `${this._ent.tracker}|${this._fill ? "fill" : this._aspectRatio()}`;
+    if (this._mapEl && this._mapKey === key) {
+      body.appendChild(this._mapEl); // re-attach the persistent map into the freshly-rendered body
+      return;
+    }
+    this._mapEl = null;
+    this._mapKey = key;
+    const gen = ++this._mapGen;
+    body.innerHTML = `<div class="map-empty">Loading map…</div>`;
+    (async () => {
+      try {
+        const helpers = window.loadCardHelpers && (await window.loadCardHelpers());
+        if (!helpers) return; // non-HA host (jsdom without a stub): leave the placeholder
+        const conf = { type: "map", entities: [this._ent.tracker], default_zoom: POSITION_MAP_ZOOM };
+        // Inline passes an aspect ratio (responsive by construction); fill mode stretches instead.
+        if (!this._fill) conf.aspect_ratio = this._aspectRatio();
+        const el = await helpers.createCardElement(conf);
+        if (gen !== this._mapGen) return; // superseded by a newer build (key changed / unmounted)
+        el.hass = this._hass;
+        if (this._fill) el.style.height = "100%";
+        this._mapEl = el;
+        const b = this._card.querySelector(".map-body");
+        if (b) {
+          b.innerHTML = "";
+          b.appendChild(el);
+        }
+      } catch (e) {
+        if (gen !== this._mapGen) return;
+        const b = this._card.querySelector(".map-body");
+        if (b) b.innerHTML = `<div class="map-empty">Map unavailable</div>`;
+      }
+    })();
+  }
+
+  // Poll for the `last_update` sensor to reflect a just-requested refresh (it arrives via websocket
+  // asynchronously after the button press resolves). Reads `this._hass` fresh each tick so it sees
+  // background pushes.
+  async _awaitLastUpdateChange(entityId, beforeStamp, timeoutMs) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 250));
+      const lu = entityId ? this._hass.states[entityId] : null;
+      if (lu && lu.last_updated !== beforeStamp) return true;
+    }
+    return false;
+  }
+
+  // Reload = force a fresh fix by pressing the watch's Update button (the integration's `see`), then
+  // await the poll outcome and re-derive the banner in place. The banner also re-derives on the next
+  // hass push, but recompute now so the spinner clears against fresh data (ADR 0008).
+  async _reload() {
+    const ent = this._ent;
+    // `_reloading` guards re-entrancy (a second tap, or a click on a button a mid-flight re-render
+    // rebuilt) and drives the spinner/disabled state through `_render`, so it survives re-renders.
+    if (!ent.updateBtn || this._reloading) return;
+    this._reloading = true;
+    this._render(); // reflect the spinner + disabled state
+    try {
+      // Mark the dedup window BEFORE pressing (like the other refresh sites) so a co-rendered card's
+      // render-refresh can't slip a second `see` through the window while this press is in flight.
+      markRefreshed(`button.press|${ent.updateBtn}`);
+      const before = ent.lastupdate ? this._hass.states[ent.lastupdate] : null;
+      await this._hass.callService("button", "press", { entity_id: ent.updateBtn });
+      await this._awaitLastUpdateChange(ent.lastupdate, before ? before.last_updated : null, 5000);
+      this.dispatchEvent(new CustomEvent("xplora-update-status", { bubbles: true, composed: true }));
+    } catch (e) {
+      // A rejected press (e.g. the watch is offline) must NOT leave the button stuck disabled and
+      // spinning -- the `finally` always clears `_reloading` and re-renders a live button.
+      console.error("xplora-watch-map-card: reload failed", e);
+    } finally {
+      this._reloading = false;
+      this._sig = ""; // force the next render to rebuild the banner from fresh state
+      if (this._hass) this._render();
+    }
+  }
+
+  // Open the SAME card full-screen (fill mode) via the shared popup host. Fill mode suppresses the
+  // header + expand button, so the popup can't recursively re-open itself (ADR 0008).
+  _expand() {
+    this._popup.open(
+      () => {
+        const c = document.createElement("xplora-watch-map-card");
+        c.fill = true;
+        c.setConfig(this._config);
+        return c;
+      },
+      { fill: true },
+    );
+  }
+
+  _esc(v) {
+    return escapeHtml(v);
+  }
+
+  _css() {
+    return `
+      :host { display: block; height: 100%; }
+      ha-card { overflow: hidden; color: var(--primary-text-color); height: 100%; display: flex; flex-direction: column; }
+
+      .map-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; flex: 0 0 auto; }
+      .map-avatar { width: 40px; height: 40px; border-radius: 50%; background-size: cover; background-position: center;
+        flex: 0 0 auto; box-shadow: 0 0 0 2px var(--divider-color); }
+      .map-avatar.fallback { display: flex; align-items: center; justify-content: center; background: var(--secondary-background-color); color: var(--secondary-text-color); }
+      .map-avatar.fallback ha-icon { --mdc-icon-size: 24px; }
+      .map-name { font-size: 1.1rem; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      /* Fix-age banner (ADR 0007): status icon + age text + reload/expand buttons. The text WRAPS
+         (never truncates) so a long status can't hide it or the buttons on a phone; the buttons are
+         fixed-size 48px tap targets that never shrink regardless of the text length. */
+      .map-banner { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px;
+        font-size: 0.92rem; font-weight: 500; border-bottom: 1px solid var(--divider-color); }
+      .map-banner > ha-icon { --mdc-icon-size: 18px; flex: 0 0 auto; }
+      .map-banner.success { color: var(--success-color, #43a047); }
+      .map-banner.warning { color: var(--warning-color, #ffa600); }
+      .map-banner.error { color: var(--error-color, #db4437); }
+      .map-banner.unknown { color: var(--secondary-text-color, #888); }
+      .map-banner-text { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; color: var(--primary-text-color); }
+      /* Fixed 48px tap targets that never shrink, so a long banner can't clip or hide them. */
+      .map-reload, .map-expand { flex: 0 0 auto; min-width: 48px; min-height: 48px; color: var(--secondary-text-color); }
+      @keyframes xplora-spin { to { transform: rotate(360deg); } }
+      .map-reload ha-icon.spin { animation: xplora-spin 0.9s linear infinite; }
+
+      /* Map body: the HA map card fills the remaining height. */
+      .map-body { flex: 1 1 auto; min-height: 0; position: relative; display: flex; }
+      .map-body > * { flex: 1 1 auto; min-height: 0; width: 100%; }
+      .map-empty { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center;
+        padding: 24px 16px; color: var(--secondary-text-color); min-height: 120px; }
+      .map-empty.error { color: var(--error-color, #db4437); }
+    `;
+  }
+
+  // When the user enabled "refresh on render", press the watch's Update button once on first show to
+  // pull a fresh fix -- deduplicated via the shared trackInflight key `button.press|<updateBtn>` so a
+  // dashboard showing both the overview and the map card fires only ONE `see`, not two (ban hygiene,
+  // ADR 0008). Off by default. Never fires without an enabled Update button (nothing to press).
+  _maybeRefreshOnRender() {
+    if (this._autoRefreshDone) return;
+    const ent = this._ent;
+    // Read the opt-in from any resolved watch entity (every one carries the attribute). Wait until at
+    // least one is alive, so a cold start doesn't decide "off" before the entity has pushed state.
+    const anyId = ent.tracker || ent.lastupdate || ent.updateBtn;
+    const primary = anyId && this._hass.states[anyId];
+    if (!this._usable(primary)) return; // not alive yet -- retry on the next hass push
+    this._autoRefreshDone = true;
+    if (!refreshOnRenderEnabled(primary)) return;
+    if (!ent.updateBtn) return;
+    trackInflight(`button.press|${ent.updateBtn}`, () => this._hass.callService("button", "press", { entity_id: ent.updateBtn }));
+  }
+}
+
+if (!customElements.get("xplora-watch-map-card")) {
+  customElements.define("xplora-watch-map-card", XploraWatchMapCard);
+}
+
+window.customCards.push({
+  type: "xplora-watch-map-card",
+  name: "Xplora Watch Map",
+  description: "A watch's current location on a map, with its fix age and a button to pull a fresh position.",
   preview: true,
 });
 

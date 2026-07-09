@@ -123,6 +123,7 @@ export async function seedDemoHa(baseUrl = DEFAULT_URL) {
       const alarms = pick(ids, /_alarms/), silents = pick(ids, /_silents/), message = pick(ids, /_message/);
       const cards = [
         { type: "custom:xplora-watch-overview-card", entity: anchor },
+        { type: "custom:xplora-watch-map-card", entity: anchor },
         { type: "custom:xplora-watch-actions-card", entity: anchor },
       ];
       if (alarms) cards.push({ type: "custom:xplora-watch-card", entity: alarms, title: "Alarms" });

@@ -127,51 +127,41 @@ describe("overview card — fix age surfaces", () => {
     expect(chip.textContent).not.toContain("just now");
   });
 
-  it("map popup banner reports the fix age anchored to the location", async () => {
-    const el = mountOverview(makeHass({ tag: "banner" }), "device_tracker.watch_banner");
+  it("omits the chip time entirely when the fix time is unknown (status icon only)", () => {
+    const el = mountOverview(makeHass({ tag: "unknown", fixIso: null }), "device_tracker.watch_unknown");
+    // Chip: status icon only, no age text -- an unknown fix time never fabricates "just now".
+    expect(el.shadowRoot.querySelector(".upd").textContent.trim()).toBe("");
+  });
+
+  // Consolidation (ADR 0008): the location row no longer hand-builds a map + banner. It mounts the
+  // standalone `xplora-watch-map-card` full-screen (fill mode), so the inline card and the popup are
+  // one component and their fix-age banner (ADR 0007) can't drift. The banner/reload behaviour itself
+  // is asserted on the map card in map-card.test.js.
+  it("location row mounts the standalone map card full-screen (fill mode), bound to the watch device", async () => {
+    const el = mountOverview(makeHass({ tag: "consol" }), "device_tracker.watch_consol");
     const row = el.shadowRoot.querySelector(".row.location");
     expect(row).toBeTruthy();
     row.click();
-    await Promise.resolve(); // let _openPopup paint the banner (the map card build can fail in jsdom)
-    const banner = el.shadowRoot.querySelector(".map-banner-text");
-    expect(banner).toBeTruthy();
-    expect(banner.textContent).toBe("Watch didn't respond · location from 23m ago");
-    expect(el.shadowRoot.querySelector(".map-banner.warning")).toBeTruthy();
+    await Promise.resolve(); // let the popup host mount the (synchronously-built) map card element
+    const popupCard = el.shadowRoot.querySelector(".modal-host .card-popup.fill xplora-watch-map-card");
+    expect(popupCard).toBeTruthy();
+    expect(popupCard.fill).toBe(true);
+    // The overview no longer paints its own banner -- that logic lives entirely in the map card now.
+    expect(el.shadowRoot.querySelector(".card-popup > .map-banner")).toBeFalsy();
   });
 
-  it("omits the time entirely when the fix time is unknown", async () => {
-    const el = mountOverview(makeHass({ tag: "unknown", fixIso: null }), "device_tracker.watch_unknown");
-    // Chip: status icon only, no age text.
-    expect(el.shadowRoot.querySelector(".upd").textContent.trim()).toBe("");
-    // Banner: status label with no " · location …" suffix.
-    el.shadowRoot.querySelector(".row.location").click();
-    await Promise.resolve();
-    expect(el.shadowRoot.querySelector(".map-banner-text").textContent).toBe("Watch didn't respond");
-  });
-
-  it("keeps the map banner live as fresh state arrives while the popup stays open", async () => {
-    const el = mountOverview(makeHass({ tag: "live", lastUpdate: "no_response", fixIso: OLD_FIX }), "device_tracker.watch_live");
-    el.shadowRoot.querySelector(".row.location").click();
-    await Promise.resolve();
-    expect(el.shadowRoot.querySelector(".map-banner-text").textContent).toBe("Watch didn't respond · location from 23m ago");
-    // A background poll lands while the popup is open: the watch responded with a fresh fix.
-    el.hass = makeHass({ tag: "live", lastUpdate: "ok", fixIso: FRESH_FIX });
-    expect(el.shadowRoot.querySelector(".map-banner-text").textContent).toBe("Updated · location just now");
-    expect(el.shadowRoot.querySelector(".map-banner.success")).toBeTruthy();
-  });
-
-  it("shows a neutral 'Location' banner (never a false 'Updated') when there is no poll outcome", async () => {
-    // `last_update` in an unmapped state (e.g. HA's `unknown` right after setup, before the first
-    // poll resolves) yields no poll outcome. ADR 0007 "no false success": the banner must NOT claim
-    // "Updated" — it shows a neutral label carrying just the fix age.
-    const el = mountOverview(makeHass({ tag: "noout", lastUpdate: "unknown", fixIso: OLD_FIX }), "device_tracker.watch_noout");
-    el.shadowRoot.querySelector(".row.location").click();
-    await Promise.resolve();
-    const banner = el.shadowRoot.querySelector(".map-banner-text");
-    expect(banner.textContent).toBe("Location · 23m ago");
-    expect(el.shadowRoot.querySelector(".map-banner.unknown")).toBeTruthy();
-    expect(el.shadowRoot.querySelector(".map-banner.success")).toBeFalsy();
-    expect(banner.textContent).not.toContain("Updated");
+  it("still opens the OTHER popups (controls) through the same generic host", async () => {
+    // Give the watch an Update button so the overview shows its controls cog.
+    const hass = makeHass({ tag: "ctrl" });
+    const BTN = "button.watch_ctrl_update";
+    hass.states[BTN] = { entity_id: BTN, state: "2026-06-27T10:00:00Z", last_updated: NOW, attributes: { xplora_role: "update" } };
+    hass.entities[BTN] = { entity_id: BTN, device_id: "dev-ctrl" };
+    const el = mountOverview(hass, "device_tracker.watch_ctrl");
+    const cog = el.shadowRoot.querySelector("[data-controls]");
+    expect(cog).toBeTruthy();
+    cog.click();
+    await Promise.resolve(); // popup host mounts the actions card element asynchronously
+    expect(el.shadowRoot.querySelector(".modal-host .card-popup xplora-watch-actions-card")).toBeTruthy();
   });
 
   it("location row shows no timestamp when fix time is unknown (no last_changed fallback)", () => {
