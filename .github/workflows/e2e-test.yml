@@ -47,14 +47,16 @@ jobs:
       - name: Install Home Assistant (locked runtime deps)
         run: python -m pip install --require-hashes -r requirements-lock.txt
 
-      # The frontend package isn't a core `homeassistant` dependency (HA installs it on demand), and
-      # the runtime lock omits it — but the browser suite needs the UI served: the readiness probe
-      # hits `/manifest.json` and the specs drive Lovelace. Install it here, constrained to exactly
-      # the build this HA core pins (package_constraints.txt) so it can never drift from the core.
-      - name: Install Home Assistant frontend (matches the pinned core)
+      # Two runtime deps HA installs on demand in production but our lean, non-`hass`-managed runner
+      # does not: `home-assistant-frontend` (the browser suite needs the UI served — the readiness
+      # probe hits `/manifest.json` and the specs drive Lovelace) and `ha-ffmpeg` (the integration's
+      # helper imports `haffmpeg` at flow-load, so the demo config flow won't start without it).
+      # Both are constrained to exactly the builds this HA core pins (package_constraints.txt), so
+      # they can never drift from the core.
+      - name: Install on-demand runtime deps (frontend, ffmpeg) matched to the pinned core
         run: |
           c="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
-          python -m pip install home-assistant-frontend -c "$c"
+          python -m pip install home-assistant-frontend ha-ffmpeg -c "$c"
 
       # NOTE: pin to a commit SHA (like the other workflows) once you settle on a version.
       - name: Set up Node
