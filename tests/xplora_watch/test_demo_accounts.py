@@ -1,10 +1,11 @@
-"""The four network-free demo accounts (see ``demo.py``).
+"""The five network-free demo accounts (see ``demo.py``).
 
 The demo sentinels let the whole integration -- including the multi-account service fan-out
 (ADR 0004) -- be exercised in a live Home Assistant with no Xplora servers: a primary Guardian, a
-second Guardian of a different child, a Contact, and a Guardian whose watch is offline. These assert
-each sentinel resolves to the ``DemoPyXploraApi`` and seeds the intended watch identity + role +
-online state, so a live area target spans all four and the Guardian pre-filter / ``watch_offline`` /
+second Guardian of a different child, a Contact, a Guardian whose watch is offline, and a Guardian
+whose forced re-fix raises (the browser e2e's Reload-failure persona). These assert each sentinel
+resolves to the ``DemoPyXploraApi`` and seeds the intended watch identity + role + online state, so
+a live area target spans all of them and the Guardian pre-filter / ``watch_offline`` /
 partial-success surfacing can be seen by hand.
 """
 
@@ -28,6 +29,7 @@ from custom_components.xplora_watch.const import (
     CONF_WATCHES,
     DEMO_ACCOUNT_EMAIL,
     DEMO_CONTACT_ACCOUNT_EMAIL,
+    DEMO_ERROR_ACCOUNT_EMAIL,
     DEMO_OFFLINE_ACCOUNT_EMAIL,
     DEMO_SECOND_PARENT_ACCOUNT_EMAIL,
     DOMAIN,
@@ -35,6 +37,7 @@ from custom_components.xplora_watch.const import (
 )
 from custom_components.xplora_watch.demo import (
     DEMO_CONTACT_WUID,
+    DEMO_ERROR_WUID,
     DEMO_OFFLINE_WUID,
     DEMO_SECOND_PARENT_WUID,
     DEMO_WUID,
@@ -42,12 +45,14 @@ from custom_components.xplora_watch.demo import (
     is_demo_account,
     make_controller,
 )
+from custom_components.xplora_watch.pyxplora_api.exception_classes import ConnectionError as XploraConnectionError
 
 _ALL_SENTINELS = (
     DEMO_ACCOUNT_EMAIL,
     DEMO_SECOND_PARENT_ACCOUNT_EMAIL,
     DEMO_CONTACT_ACCOUNT_EMAIL,
     DEMO_OFFLINE_ACCOUNT_EMAIL,
+    DEMO_ERROR_ACCOUNT_EMAIL,
 )
 
 
@@ -74,6 +79,7 @@ def test_is_demo_account_recognizes_every_sentinel_and_nothing_else() -> None:
         (DEMO_SECOND_PARENT_ACCOUNT_EMAIL, DEMO_SECOND_PARENT_WUID, "FIRST", False),
         (DEMO_CONTACT_ACCOUNT_EMAIL, DEMO_CONTACT_WUID, "SECOND", True),
         (DEMO_OFFLINE_ACCOUNT_EMAIL, DEMO_OFFLINE_WUID, "FIRST", False),
+        (DEMO_ERROR_ACCOUNT_EMAIL, DEMO_ERROR_WUID, "FIRST", False),
     ],
 )
 async def test_each_demo_sentinel_seeds_its_own_watch_and_role(email: str, wuid: str, guardian_type: str, is_contact: bool) -> None:
@@ -87,9 +93,38 @@ async def test_each_demo_sentinel_seeds_its_own_watch_and_role(email: str, wuid:
     assert (guardian_type != "FIRST") is is_contact
 
 
-async def test_the_four_demo_accounts_are_distinct_watches() -> None:
-    """Distinct wuids, so a single area target spans all four and fans out per ADR 0004."""
-    assert len({DEMO_WUID, DEMO_SECOND_PARENT_WUID, DEMO_CONTACT_WUID, DEMO_OFFLINE_WUID}) == 4
+async def test_the_five_demo_accounts_are_distinct_watches() -> None:
+    """Distinct wuids, so a single area target spans all of them and fans out per ADR 0004."""
+    assert len({DEMO_WUID, DEMO_SECOND_PARENT_WUID, DEMO_CONTACT_WUID, DEMO_OFFLINE_WUID, DEMO_ERROR_WUID}) == 5
+
+
+async def test_error_account_fails_a_forced_fix_only_after_the_first_cycle_succeeds() -> None:
+    """The Error demo watch loads normally (first fix cycle succeeds), then a *forced* re-fix raises.
+
+    The entry has to load for its dashboard view and map card to exist at all -- so the first fix
+    cycle (the setup refresh) must succeed and seed a real position. `askWatchLocate` is the
+    once-per-cycle entry point in `coordinator._refresh_watch_fix` (which then reads
+    `loadWatchLocation` possibly several times), so the second cycle raises there, before any read.
+    That is the map card's Reload button (the watch's Update button); the error propagates up so the
+    frontend `callService` rejects -> the card's failed-press recovery runs. Polling is OFF by
+    default, so nothing else fires a locate in between. Contrast the Offline watch, which returns
+    `False` (a no-response, keeps the last fix) rather than raising.
+    """
+    controller = await _demo_controller(DEMO_ERROR_ACCOUNT_EMAIL)
+
+    # First cycle (the setup refresh) succeeds and returns a real position.
+    assert await controller.askWatchLocate(DEMO_ERROR_WUID) is True
+    first = await controller.loadWatchLocation(DEMO_ERROR_WUID)
+    assert first["lat"] and first["lng"]
+
+    # Every forced re-fix cycle after that raises at the locate request -- the Reload press errors.
+    with pytest.raises(XploraConnectionError):
+        await controller.askWatchLocate(DEMO_ERROR_WUID)
+
+    # A healthy Guardian's forced re-fix keeps working -- the gate is scoped to the Error persona.
+    healthy = await _demo_controller(DEMO_ACCOUNT_EMAIL)
+    assert await healthy.askWatchLocate(DEMO_WUID) is True
+    assert await healthy.askWatchLocate(DEMO_WUID) is True
 
 
 async def test_offline_account_refuses_control_actions_but_online_ones_accept() -> None:
@@ -162,6 +197,7 @@ def _demo_entry(hass: HomeAssistant, email: str, wuid: str) -> MockConfigEntry:
         (DEMO_SECOND_PARENT_ACCOUNT_EMAIL, DEMO_SECOND_PARENT_WUID),
         (DEMO_CONTACT_ACCOUNT_EMAIL, DEMO_CONTACT_WUID),
         (DEMO_OFFLINE_ACCOUNT_EMAIL, DEMO_OFFLINE_WUID),
+        (DEMO_ERROR_ACCOUNT_EMAIL, DEMO_ERROR_WUID),
     ],
 )
 async def test_demo_entry_sets_up_network_free_and_creates_its_watch_device(hass: HomeAssistant, email: str, wuid: str) -> None:

@@ -1,0 +1,87 @@
+# Runs the browser end-to-end suite (@playwright/test) against a real, demo-only Home Assistant that
+# the harness boots and seeds itself (tests/e2e/). Demo account only, never a real login (ADR 0009).
+# Separate from the Python `Tests` and `Card Tests` workflows; the spec exercises the whole live
+# integration (role discovery via the entity registry, the served bundle, HA's map card mounting),
+# not just the card JS — hence the broad path gate.
+name: E2E Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "custom_components/**"
+      - "tests/e2e/**"
+      - "playwright.config.*"
+      - "package.json"
+      - ".github/workflows/e2e-test.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "custom_components/**"
+      - "tests/e2e/**"
+      - "playwright.config.*"
+      - "package.json"
+      - ".github/workflows/e2e-test.yml"
+
+jobs:
+  e2e-test:
+    name: Browser e2e (map card)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+
+      # The runtime lock gives a runnable `hass` (what the harness boots). The test-only lock is not
+      # needed — the specs drive HA over HTTP/WS, they don't import the pytest stack.
+      - name: Install Home Assistant (locked runtime deps)
+        run: python -m pip install --require-hashes -r requirements-lock.txt
+
+      # NOTE: pin to a commit SHA (like the other workflows) once you settle on a version.
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      # --ignore-scripts: skip package lifecycle scripts during install (none are needed; skipping
+      # avoids unexpected native-binary build steps). The browser is installed explicitly below.
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      # Standard Playwright chromium (x86 ubuntu-latest) — NOT the arm64 headless-shell workaround the
+      # devcontainer MCP notes describe; @playwright/test ships its own chromium with an x86 build.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run e2e tests
+        run: npm run test:e2e
+
+      # Headless CI failures are near-undebuggable without these: the Playwright report/trace and the
+      # HA log the harness writes.
+      - name: Upload Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+      - name: Upload Home Assistant log
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ha-log
+          path: .e2e-ha/ha.log
+          retention-days: 7

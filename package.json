@@ -1,10 +1,12 @@
 {
     "devDependencies": {
+        "@playwright/test": "1.61.1",
         "jsdom": "^25.0.1",
         "vitest": "^2.1.8"
     },
     "scripts": {
         "test:card": "vitest run",
-        "test:card:watch": "vitest"
+        "test:card:watch": "vitest",
+        "test:e2e": "playwright test"
     }
 }

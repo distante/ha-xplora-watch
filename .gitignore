@@ -30,6 +30,13 @@ config/*
 
 node_modules
 
+# Browser e2e (Playwright): the throwaway demo HA config dir + auth state, and the run reports.
+# We commit the recipe (tests/e2e/), never the regenerated runtime state — same split as config/.
+.e2e-ha/
+test-results/
+playwright-report/
+blob-report/
+
 # NOTE: custom_components/xplora_watch/services.yaml is committed (a static description of every
 # service) because hassfest/HACS require it. The integration overwrites it locally at runtime with
 # per-watch target/user dropdown options (helper.create_service_yaml_file) -- don't commit those

@@ -7,17 +7,22 @@ That makes the email a safe, self-sufficient switch: a demo entry is network-fre
 environment variable, no real login attempt on startup), while a real entry -- whose email never
 matches -- is never swapped to the demo controller.
 
-Four sentinels seed four distinct accounts so the multi-account service fan-out (ADR 0004) can be
+Five sentinels seed five distinct accounts so the multi-account service fan-out (ADR 0004) can be
 exercised in a live Home Assistant with no servers:
 
 - `demo@xplora-watch.invalid` -- primary **Guardian** of "Patrick".
 - `demo-second-parent@xplora-watch.invalid` -- a second **Guardian**, of a different child ("Rosa").
 - `demo-contact@xplora-watch.invalid` -- a **Contact** (not the primary guardian) of "Timmy", so a
-  control action targeting all four skips it and the partial-success notification can be seen.
+  control action targeting all of them skips it and the partial-success notification can be seen.
 - `demo-offline@xplora-watch.invalid` -- a **Guardian** of "Max" whose watch is **offline**, so a
   control action is *refused* (the `watch_offline` surfacing) rather than looking like it worked.
+- `demo-error@xplora-watch.invalid` -- a **Guardian** of "Nora" whose watch loads normally but whose
+  *forced* re-fix **raises**: the first locate (the setup refresh) succeeds so the entry loads with a
+  real position, then every later locate errors. That is what the map card's Reload button hits --
+  the browser e2e suite asserts the button recovers instead of staying stuck spinning (ADR 0008).
+  Distinct from Offline, which returns a no-response (keeps the last fix), not an error.
 
-Put all four watch devices in one Home Assistant area, then a single service call targeting that
+Put all five watch devices in one Home Assistant area, then a single service call targeting that
 area fans out across every account: the online Guardians act, the Contact is skipped, and the
 offline watch is reported as offline.
 
@@ -40,11 +45,13 @@ from typing import Any, Final
 from .const import (
     DEMO_ACCOUNT_EMAIL,
     DEMO_CONTACT_ACCOUNT_EMAIL,
+    DEMO_ERROR_ACCOUNT_EMAIL,
     DEMO_OFFLINE_ACCOUNT_EMAIL,
     DEMO_SECOND_PARENT_ACCOUNT_EMAIL,
 )
 from .demo_voice import DEMO_VOICE_AMR_B64
 from .pyxplora_api.const import ALL_WATCH_FUNCTIONS, WatchFunction
+from .pyxplora_api.exception_classes import ConnectionError as XploraConnectionError
 from .pyxplora_api.model import ChatsNew, Data, SimpleChat, User
 from .pyxplora_api.pyxplora_api_async import FetchError, PyXploraApi, TokenRefreshOutcome
 from .pyxplora_api.status import ChatType, LocationType, NormalStatus, WatchOnlineStatus
@@ -78,6 +85,8 @@ DEMO_SECOND_PARENT_WUID: Final = "00000000-0000-0000-0000-000000000002"
 DEMO_CONTACT_WUID: Final = "00000000-0000-0000-0000-000000000003"
 # --- Offline demo account ("Max", Guardian but the watch is switched off/offline) ------------------
 DEMO_OFFLINE_WUID: Final = "00000000-0000-0000-0000-000000000004"
+# --- Error demo account ("Nora", Guardian whose forced re-fix raises after the first success) -------
+DEMO_ERROR_WUID: Final = "00000000-0000-0000-0000-000000000005"
 
 
 @dataclass(frozen=True)
@@ -95,6 +104,11 @@ class _DemoProfile:
     definition is served, so the `current_safezone` sensor, the safezone card tile and the per-zone
     tracker are all exercisable network-free. Empty (the default) keeps the watch outside every
     zone -- the sensor's unknown-state path.
+    ``refresh_raises`` True models a watch whose *forced* re-fix fails: the FIRST locate still
+    succeeds (so the entry loads with a real position and the map has something to draw), then every
+    later ``askWatchLocate``/``loadWatchLocation`` raises. That is the map card's Reload path (it
+    presses the watch's Update button), so a rejected press can be exercised in a real browser. It is
+    distinct from ``online=False`` (Offline), which returns a no-response and keeps the last fix.
     """
 
     user_id: str
@@ -114,6 +128,7 @@ class _DemoProfile:
     has_voice: bool
     online: bool = True
     safe_zone_label: str = ""
+    refresh_raises: bool = False
 
 
 _PROFILES: Final[dict[str, _DemoProfile]] = {
@@ -193,6 +208,26 @@ _PROFILES: Final[dict[str, _DemoProfile]] = {
         has_voice=False,
         online=False,
     ),
+    DEMO_ERROR_ACCOUNT_EMAIL: _DemoProfile(
+        user_id="demo_error_account",
+        user_name="Demo Error",
+        wuid=DEMO_ERROR_WUID,
+        child_name="Nora",
+        # A Guardian (so it drives locate tracking, like the primary) whose *forced* re-fix fails.
+        guardian_type="FIRST",
+        # Heide Park Resort, Soltau, Lower Saxony.
+        lat=53.0330,
+        lng=9.8720,
+        poi="Heide Park Resort",
+        city="Soltau",
+        province="Niedersachsen",
+        country="Deutschland",
+        battery=57,
+        steps=2960,
+        xcoin=45,
+        has_voice=False,
+        refresh_raises=True,
+    ),
 }
 
 
@@ -229,6 +264,11 @@ class DemoPyXploraApi(PyXploraApi):
     def __init__(self, **kwargs: Any) -> None:
         """Pick the demo profile from the sign-in email, then init the base client (network-free)."""
         self._profile = _profile_for(kwargs.get("email"))
+        # For the `refresh_raises` profile: the FIRST fix cycle must still succeed so the entry loads
+        # with a real position; only forced re-fixes after that raise. `askWatchLocate` is the
+        # once-per-cycle entry point (`coordinator._refresh_watch_fix` calls it once, then reads
+        # `loadWatchLocation` possibly several times), so the cycle count is tracked there.
+        self._located_once = False
         super().__init__(**kwargs)
 
     async def init(self, *args: Any, **kwargs: Any) -> None:
@@ -373,7 +413,19 @@ class DemoPyXploraApi(PyXploraApi):
         return ""
 
     async def askWatchLocate(self, wuid: str) -> bool:
-        """The demo watch always "responds" to a locate request."""
+        """The demo watch "responds" to a locate request.
+
+        The `refresh_raises` profile lets the FIRST cycle through (so the entry loads with a real
+        position and the map draws), then raises on every *forced* re-fix after it. This is the
+        map card's Reload path (it presses the watch's Update button), so the exception propagates
+        through the coordinator and the frontend `callService` rejects -- driving the card's
+        failed-press recovery. A connection error (not auth/rate limit) keeps it a plain, retryable
+        failure. Gating here, at the once-per-cycle entry point, fails the whole cycle before any
+        `loadWatchLocation` read runs.
+        """
+        if self._profile.refresh_raises and self._located_once:
+            raise XploraConnectionError("demo error persona: the watch did not accept the locate request")
+        self._located_once = True
         return True
 
     async def loadWatchLocation(self, wuid: str = "", with_ask: bool = True) -> dict[str, Any]:

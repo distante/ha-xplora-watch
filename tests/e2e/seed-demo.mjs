@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Seed a FRESH Home Assistant instance into a deterministic, network-free demo-only state:
 //   1. onboarding (admin/password)
-//   2. add the four demo config entries via the config-flow REST API
+//   2. add the demo config entries (one per persona) via the config-flow REST API
 //   3. complete each entry's OPTIONS flow (selects the watch — without this NO entities are created)
 //   4. enable the disabled-by-default card entities (alarms/silents/message/xcoin/buttons/…)
 //   5. trigger a functions refresh so alarm/silent/chat data populates
@@ -15,21 +15,21 @@
 // Prerequisites (caller's job): HA already running and FRESH (onboarding not done), with the
 // integration discoverable (`<config>/custom_components/xplora_watch`). Node 18+ (fetch) / 22+ (WebSocket).
 
+import { PERSONAS, slug } from "./demo-personas.mjs";
+
 const DEFAULT_URL = process.env.HA_URL || "http://localhost:8123";
 const OWNER = { name: "E2E Admin", username: "admin", password: "password", language: "en" };
-const DEMO_ACCOUNTS = [
-  { email: "demo@xplora-watch.invalid", alias: "Dad" },
-  { email: "demo-second-parent@xplora-watch.invalid", alias: "Mom" },
-  { email: "demo-contact@xplora-watch.invalid", alias: "Contact" },
-  { email: "demo-offline@xplora-watch.invalid", alias: "Offline" },
-];
 const CRED_DEFAULTS = { password: "demo", language: "en", timezone: "Europe/Berlin", userlang: "en-GB" };
 const DASHBOARD = { title: "Xplora Demo", url_path: "xplora-demo", icon: "mdi:watch" };
+// The device name is "{ward} Watch ({alias})" (entity.py); recover the alias from the trailing
+// "(…)" so each view's path can be keyed on the JS-owned alias, not the Python-owned ward name.
+const aliasFromDeviceName = (name) => (/\(([^)]+)\)\s*$/.exec(name) || [])[1];
 
 export async function seedDemoHa(baseUrl = DEFAULT_URL) {
   const base = baseUrl.replace(/\/$/, "");
   const clientId = `${base}/`;
   let token = null;
+  let ownerTokens = null; // full /auth/token response — reused by the e2e harness to authenticate the browser
 
   async function req(method, path, { json, form } = {}) {
     const headers = {};
@@ -73,13 +73,14 @@ export async function seedDemoHa(baseUrl = DEFAULT_URL) {
   const t = await req("POST", "/auth/token", { form: { grant_type: "authorization_code", code: u.data.auth_code, client_id: clientId } });
   if (!t.ok || !t.data?.access_token) fail("token exchange failed", t);
   token = t.data.access_token;
+  ownerTokens = t.data; // { access_token, refresh_token, expires_in, token_type } — for browser auth
   console.log("✓ owner created + token acquired (admin/password)");
   for (const step of ["core_config", "analytics"]) await req("POST", `/api/onboarding/${step}`, { json: {} });
   await req("POST", "/api/onboarding/integration", { json: { client_id: clientId, redirect_uri: `${base}/?auth_callback=1` } });
   console.log("✓ onboarding complete");
 
-  // --- 2. add the four demo entries via the config flow -----------------------------------------
-  for (const { email, alias } of DEMO_ACCOUNTS) {
+  // --- 2. add the demo entries via the config flow (one per persona) ----------------------------
+  for (const { email, alias } of PERSONAS) {
     const start = await req("POST", "/api/config/config_entries/flow", { json: { handler: "xplora_watch", show_advanced_options: false } });
     if (!start.ok) fail(`flow start failed for ${email} (is the integration discoverable via <config>/custom_components?)`, start);
     const flowId = start.data.flow_id;
@@ -108,9 +109,13 @@ export async function seedDemoHa(baseUrl = DEFAULT_URL) {
   await sleep(4000); // let the entries reload and create entities
 
   // --- 4. enable disabled-by-default entities, then 5. build dashboards -------------------------
-  const summary = await withWs(async (call) => {
+  const { built: summary, expectUpdateBtns } = await withWs(async (call) => {
     const reg = (await call("config/entity_registry/list")).filter((e) => e.platform === "xplora_watch");
     for (const e of reg.filter((e) => e.disabled_by)) await call("config/entity_registry/update", { entity_id: e.entity_id, disabled_by: null });
+    // The Update button is disabled-by-default (EntityCategory.CONFIG), so enabling it above reloads
+    // its entry to instantiate it. A card's Reload button only appears once that state is live, so
+    // count them here and (below) wait for every one to load before returning.
+    const expectUpdateBtns = reg.filter((e) => e.entity_id.startsWith("button.") && /_watch_update_/.test(e.entity_id)).length;
     const devices = await call("config/device_registry/list");
     const devName = Object.fromEntries(devices.map((d) => [d.id, d.name_by_user || d.name]));
     const byDevice = {};
@@ -129,14 +134,33 @@ export async function seedDemoHa(baseUrl = DEFAULT_URL) {
       if (alarms) cards.push({ type: "custom:xplora-watch-card", entity: alarms, title: "Alarms" });
       if (silents) cards.push({ type: "custom:xplora-watch-card", entity: silents, title: "Silent times" });
       if (message) cards.push({ type: "custom:xplora-watch-chat-card", entity: message, title: "Chat" });
-      views.push({ title: name, path: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""), cards });
+      // Path keyed on the alias (JS-owned) so specs navigate by role without depending on the ward
+      // name; falls back to a name-derived slug if the "(alias)" suffix is ever missing. Title stays
+      // the friendly device name.
+      const alias = aliasFromDeviceName(name);
+      const path = alias && PERSONAS.some((p) => p.alias === alias) ? slug(alias) : slug(name);
+      views.push({ title: name, path, cards });
       built.push(`${name} (${cards.length} cards)`);
     }
     try { await call("lovelace/dashboards/create", { ...DASHBOARD, mode: "storage", show_in_sidebar: true, require_admin: false }); } catch {}
     await call("lovelace/config/save", { url_path: DASHBOARD.url_path, config: { title: DASHBOARD.title, views } });
-    return built;
+    return { built, expectUpdateBtns };
   });
   console.log(`✓ enabled card entities + built dashboard "${DASHBOARD.title}": ${summary.join(", ")}`);
+
+  // Wait for the enable-triggered entry reloads to settle: every watch's Update button must have a
+  // live state, or a card's Reload button won't render and the browser specs would race the reload.
+  await withWs(async (call) => {
+    const deadline = Date.now() + 60000;
+    let live = 0;
+    while (Date.now() < deadline) {
+      live = (await call("get_states")).filter((s) => s.entity_id.startsWith("button.") && /_watch_update_/.test(s.entity_id)).length;
+      if (live >= expectUpdateBtns) return live;
+      await sleep(500);
+    }
+    fail(`only ${live} Update-button states appeared; expected ${expectUpdateBtns}`);
+  });
+  console.log(`✓ ${expectUpdateBtns} Update button(s) live (reload controls ready)`);
 
   // --- 6. trigger a functions refresh so alarms/silents/chat populate (best-effort) -------------
   await withWs(async (call) => {
@@ -152,10 +176,12 @@ export async function seedDemoHa(baseUrl = DEFAULT_URL) {
     const dashes = await call("lovelace/dashboards/list");
     return { entries: ce.length, loaded: ce.filter((e) => e.state === "loaded").length, hasDashboard: dashes.some((d) => d.url_path === DASHBOARD.url_path) };
   });
-  if (verify.entries !== 4 || verify.loaded !== 4) fail(`expected 4 loaded entries, got ${verify.loaded}/${verify.entries}`);
+  const expected = PERSONAS.length;
+  if (verify.entries !== expected || verify.loaded !== expected)
+    fail(`expected ${expected} loaded entries, got ${verify.loaded}/${verify.entries}`);
   if (!verify.hasDashboard) fail(`dashboard "${DASHBOARD.url_path}" was not created`);
-  console.log(`✓ VERIFIED: 4 demo entries loaded, dashboard "${DASHBOARD.url_path}" present, zero real accounts`);
-  return { entries: verify.entries, dashboard: DASHBOARD.url_path };
+  console.log(`✓ VERIFIED: ${expected} demo entries loaded, dashboard "${DASHBOARD.url_path}" present, zero real accounts`);
+  return { entries: verify.entries, dashboard: DASHBOARD.url_path, baseUrl: base, ownerTokens };
 }
 
 // CLI entrypoint.
