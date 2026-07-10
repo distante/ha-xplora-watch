@@ -20,14 +20,19 @@ PORT="${E2E_HA_PORT:-8125}"
 CONFIG_DIR="${E2E_HA_CONFIG:-$INTEGRATION/.e2e-ha/config}"
 LOG_FILE="$(dirname "$CONFIG_DIR")/ha.log" # uploaded as a CI artifact on failure (headless is otherwise blind)
 
+# A minimal config dedicated to the e2e suite (NOT the everyday dev config/configuration.yaml): it
+# declares only what the map-card flow needs, so CI boots clean and fast and never breaks when the
+# dev config changes. See tests/e2e/ha-config.yaml for the full rationale.
+E2E_CONFIG_SRC="$SCRIPT_DIR/ha-config.yaml"
+
 command -v hass >/dev/null || { echo "error: 'hass' not found — install the locked deps first." >&2; exit 1; }
-[ -f "$INTEGRATION/config/configuration.yaml" ] || { echo "error: integration config missing (recurse the submodule)." >&2; exit 1; }
+[ -f "$E2E_CONFIG_SRC" ] || { echo "error: e2e config missing at $E2E_CONFIG_SRC (recurse the submodule)." >&2; exit 1; }
 
 # Fresh config dir every run (the seed refuses to double-seed). The integration is discovered via the
 # canonical <config>/custom_components symlink; the http port is pinned so runs never collide.
 rm -rf "$CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
-cp "$INTEGRATION/config/configuration.yaml" "$CONFIG_DIR/configuration.yaml"
+cp "$E2E_CONFIG_SRC" "$CONFIG_DIR/configuration.yaml"
 printf '\n# e2e harness: pin the port so it never collides with the dev/MCP HA on :8123.\nhttp:\n  server_port: %s\n' "$PORT" >> "$CONFIG_DIR/configuration.yaml"
 ln -sfn "$INTEGRATION/custom_components" "$CONFIG_DIR/custom_components"
 

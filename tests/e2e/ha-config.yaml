@@ -1,0 +1,33 @@
+# Minimal, dedicated Home Assistant config for the browser e2e suite (tests/e2e/). Demo account
+# only, never a real login (ADR 0009). boot-ha.sh copies this file into the throwaway config dir and
+# appends the pinned `http:` port, so do NOT declare `http:` here.
+#
+# Deliberately NOT config/configuration.yaml (the everyday dev config). Two reasons:
+#   1. Decoupling: the dev config is free to declare whatever a human developer wants (cloud, stream,
+#      ssdp, mobile_app, media_source, ...); the e2e suite should not break when it changes.
+#   2. Quiet, fast boot: in lean CI most of those integrations fail to set up (their runtime deps are
+#      not in requirements-lock.txt), filling the ha.log artifact with setup-failure noise. This set
+#      declares only what the map-card flow needs, so CI boots clean and fast.
+#
+# This does NOT, by itself, fix the "frontend hangs on Loading data" bug. On boot the frontend's
+# get_services call imports HA's hardcoded base-component set (helpers/service._base_components --
+# camera, ai_task, assist_satellite, ...), which loads regardless of what this file declares and
+# transitively pulls in conversation/tts/assist_pipeline; several need deps the lean runtime lock
+# omits (hassil, numpy, ...). Those are pre-installed by the e2e workflow -- see
+# .github/workflows/e2e-test.yml.
+
+# The frontend UI the browser suite drives. Pulls in its dependencies (api, auth, onboarding,
+# lovelace, websocket_api, http, ...), so the seed's onboarding + storage-dashboard creation and the
+# authenticated WebSocket all work. The webServer readiness probe hits /manifest.json.
+frontend:
+
+# xplora_watch's after_dependency: helper.py imports the ffmpeg component at load (the config flow
+# won't start without it), and it converts AMR voice messages to mp3. ha-ffmpeg is installed in CI.
+ffmpeg:
+
+# Verbose integration logs, written to the ha.log the harness uploads as a CI artifact on failure
+# (a headless run is otherwise blind).
+logger:
+  default: info
+  logs:
+    custom_components.xplora_watch: debug

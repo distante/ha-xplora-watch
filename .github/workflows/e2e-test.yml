@@ -47,16 +47,30 @@ jobs:
       - name: Install Home Assistant (locked runtime deps)
         run: python -m pip install --require-hashes -r requirements-lock.txt
 
-      # Two runtime deps HA installs on demand in production but our lean, non-`hass`-managed runner
-      # does not: `home-assistant-frontend` (the browser suite needs the UI served — the readiness
-      # probe hits `/manifest.json` and the specs drive Lovelace) and `ha-ffmpeg` (the integration's
-      # helper imports `haffmpeg` at flow-load, so the demo config flow won't start without it).
-      # Both are constrained to exactly the builds this HA core pins (package_constraints.txt), so
-      # they can never drift from the core.
-      - name: Install on-demand runtime deps (frontend, ffmpeg) matched to the pinned core
+      # Runtime deps HA installs on demand in production but our lean, non-`hass`-managed runner does
+      # not (none are in requirements-lock.txt). All are constrained to exactly the builds this HA
+      # core pins (package_constraints.txt), so they can never drift from the core.
+      #   - home-assistant-frontend: the browser suite needs the UI served — the readiness probe hits
+      #     `/manifest.json` and the specs drive Lovelace.
+      #   - ha-ffmpeg: the integration's helper imports `haffmpeg` at flow-load, so the demo config
+      #     flow won't start without it.
+      #   - hassil, home-assistant-intents, mutagen, numpy, pymicro-vad, pyspeex-noise, PyTurboJPEG:
+      #     the frontend's boot-time `get_services` call imports HA's hardcoded base-component set (via
+      #     homeassistant.helpers.service._base_components — camera, ai_task, assist_satellite, ...),
+      #     which transitively load conversation/tts/assist_pipeline; those module-load imports pull
+      #     these packages in. Without them `get_services` raises, the frontend hangs forever on the
+      #     "Loading data" splash, and no dashboard ever renders. The
+      #     list is fixed by HA's hardcoded `_base_components`, NOT by our config, so a minimal config
+      #     does not avoid it. To regenerate after a core bump (only if the frontend hangs again):
+      #     call `homeassistant.helpers.service._base_components()` under the lean lock and add
+      #     whatever it fails to import.
+      - name: Install on-demand runtime deps matched to the pinned core
         run: |
           c="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
-          python -m pip install home-assistant-frontend ha-ffmpeg -c "$c"
+          python -m pip install \
+            home-assistant-frontend ha-ffmpeg \
+            hassil home-assistant-intents mutagen numpy pymicro-vad pyspeex-noise PyTurboJPEG \
+            -c "$c"
 
       # NOTE: pin to a commit SHA (like the other workflows) once you settle on a version.
       - name: Set up Node
