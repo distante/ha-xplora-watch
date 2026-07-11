@@ -13,7 +13,7 @@ device <-> account resolution itself is covered in ``test_device_targeting.py``.
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import voluptuous as vol
@@ -253,6 +253,120 @@ async def test_turn_all_alarms_toggles_every_entry(hass: HomeAssistant, enabled:
     coord.async_set_updated_data.assert_called_once()
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_turn_all_alarms_noop_is_confirmed_via_refresh(hass: HomeAssistant, enabled: bool) -> None:
+    """A no-op alarm toggle must NOT surface as ``watch_offline`` (ADR 0012).
+
+    Setting an alarm to the state it already has makes the server reject the ``modifyAlarm`` with a
+    generic error, so the toggle call returns falsy (a provisional refusal). Because that error is
+    indistinguishable from a real failure, we confirm against the post-write re-fetch instead: when
+    the list already shows every alarm in the requested state, the intent holds and the call succeeds
+    silently rather than raising.
+    """
+    coord = _install(hass)
+    method = "setEnableAlarmTime" if enabled else "setDisableAlarmTime"
+    setattr(coord.controller, method, AsyncMock(return_value=False))  # server no-op rejection -> falsy
+    target = "ENABLE" if enabled else "DISABLE"
+    coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": target}, {"id": "a2", "status": target}])
+
+    # Must not raise: every alarm is already in the requested state per the refresh.
+    await _service(hass, coord, XploraAlarmService).async_set_all_enabled(enabled, **_kwargs(coord))
+
+    coord.async_set_updated_data.assert_called_once()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_turn_all_alarms_genuine_failure_still_surfaces(hass: HomeAssistant, enabled: bool) -> None:
+    """Fail-loud is preserved (ADR 0012): a falsy toggle whose alarm did NOT reach the requested
+    state after the re-fetch still raises ``watch_offline`` -- the confirmation only rescues true
+    no-ops, never a genuine failure."""
+    coord = _install(hass)
+    method = "setEnableAlarmTime" if enabled else "setDisableAlarmTime"
+    setattr(coord.controller, method, AsyncMock(return_value=False))
+    off_target = "DISABLE" if enabled else "ENABLE"  # the alarm is NOT in the requested state
+    coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": off_target}])
+
+    with pytest.raises(ServiceValidationError) as err:
+        await _service(hass, coord, XploraAlarmService).async_set_all_enabled(enabled, **_kwargs(coord))
+
+    assert err.value.translation_key == "watch_offline"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_set_alarm_enabled_noop_is_confirmed_via_refresh(hass: HomeAssistant, enabled: bool) -> None:
+    """The single-alarm toggle applies the same confirmation (ADR 0012): a no-op that the server
+    rejects is not surfaced as ``watch_offline`` when the re-fetch shows the alarm already in the
+    requested state."""
+    coord = _install(hass)
+    method = "setEnableAlarmTime" if enabled else "setDisableAlarmTime"
+    setattr(coord.controller, method, AsyncMock(return_value=False))  # no-op rejection -> falsy
+    target = "ENABLE" if enabled else "DISABLE"
+    coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": target}])
+
+    # Must not raise: the alarm is already in the requested state.
+    await _service(hass, coord, XploraAlarmService).async_set_enabled(
+        **_kwargs(coord, **{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_ENABLED: enabled})
+    )
+
+
+async def test_turn_all_alarms_mixed_real_toggle_and_noop_succeeds(hass: HomeAssistant) -> None:
+    """The headline case (ADR 0012): "turn all on" where one alarm really flips and another is
+    already on. The no-op's provisional refusal must not sink the whole call -- the post-write
+    re-fetch shows every alarm on target, so the watch is confirmed a success. This is the mixed
+    real-success + no-op on one watch that the per-watch worst-wins collapse would otherwise report
+    as a refusal.
+    """
+    coord = _install(hass)
+    # a1 is off -> a real enable the server accepts (True); a2 is already on -> a no-op the server
+    # rejects (False).
+    coord.controller.setEnableAlarmTime = AsyncMock(side_effect=lambda aid: aid == "a1")
+    # Enumerate sees the pre-toggle mix; the post-toggle refresh sees both enabled.
+    coord.controller.getWatchAlarm = AsyncMock(
+        side_effect=[
+            [{"id": "a1", "status": "DISABLE"}, {"id": "a2", "status": "ENABLE"}],
+            [{"id": "a1", "status": "ENABLE"}, {"id": "a2", "status": "ENABLE"}],
+        ]
+    )
+
+    # Must not raise: every alarm is on target after the toggle.
+    await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord))
+
+    coord.async_set_updated_data.assert_called_once()
+
+
+async def test_turn_all_alarms_refresh_failure_cannot_confirm(hass: HomeAssistant, caplog) -> None:
+    """A failed confirming re-fetch must NOT rescue a no-op's provisional refusal (ADR 0012): with no
+    authoritative end state to check, the call fails loudly rather than guessing success."""
+    coord = _install(hass)
+    coord.controller.setEnableAlarmTime = AsyncMock(return_value=False)  # no-op rejection -> falsy
+    # Enumerate succeeds; the post-toggle refresh fails, so the end state can't be confirmed.
+    coord.controller.getWatchAlarm = AsyncMock(side_effect=[[{"id": "a1", "status": "ENABLE"}], FetchError("Alarms", "boom")])
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ServiceValidationError) as err:
+        await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord))
+
+    assert err.value.translation_key == "watch_offline"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_set_alarm_enabled_genuine_failure_still_surfaces(hass: HomeAssistant, enabled: bool) -> None:
+    """Single-handler fail-loud guard (ADR 0012): a falsy toggle whose alarm did NOT reach the
+    requested state after the re-fetch still raises ``watch_offline`` -- the confirmation rescues only
+    a true no-op, never a genuine failure (this pins the single-alarm path, mirroring the bulk guard)."""
+    coord = _install(hass)
+    method = "setEnableAlarmTime" if enabled else "setDisableAlarmTime"
+    setattr(coord.controller, method, AsyncMock(return_value=False))
+    off_target = "DISABLE" if enabled else "ENABLE"  # the alarm is NOT in the requested state
+    coord.controller.getWatchAlarm = AsyncMock(return_value=[{"id": "a1", "status": off_target}])
+
+    with pytest.raises(ServiceValidationError) as err:
+        await _service(hass, coord, XploraAlarmService).async_set_enabled(
+            **_kwargs(coord, **{ATTR_SERVICE_ALARM_ID: "a1", ATTR_SERVICE_ENABLED: enabled})
+        )
+
+    assert err.value.translation_key == "watch_offline"
+
+
 @pytest.mark.parametrize(("enabled", "method"), [(True, "setEnableSilentTime"), (False, "setDisableSilentTime")])
 async def test_turn_all_silents_toggles_every_entry(hass: HomeAssistant, enabled: bool, method: str) -> None:
     coord = _install(hass)
@@ -268,6 +382,23 @@ async def test_turn_all_silents_toggles_every_entry(hass: HomeAssistant, enabled
     coord.async_set_updated_data.assert_called_once()
 
 
+async def test_turn_all_silents_fetch_error_surfaces_loudly(hass: HomeAssistant, caplog) -> None:
+    """Symmetry with the alarm case: a failed silent-time enumerate must fail loudly, not report a
+    silent success. Both bulk handlers share the ``_Account.call`` FetchError handling, so this pins
+    the silent path against a regression there."""
+    coord = _install(hass)
+    coord.controller.setEnableSilentTime = AsyncMock(return_value=True)
+    coord.controller.getSilentTime = AsyncMock(return_value=FetchError("SlientTimes", "boom"))
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ServiceValidationError) as err:
+        await _service(hass, coord, XploraSilentService).async_set_all_enabled(True, **_kwargs(coord))
+
+    assert err.value.translation_key == "nothing_actioned"
+    coord.controller.setEnableSilentTime.assert_not_awaited()
+    coord.async_set_updated_data.assert_not_called()
+    assert "boom" in caplog.text
+
+
 async def test_turn_all_alarms_empty_list_is_idempotent(hass: HomeAssistant) -> None:
     """No alarms -> no toggle calls, but the refresh still runs (harmless no-op)."""
     coord = _install(hass)
@@ -281,17 +412,46 @@ async def test_turn_all_alarms_empty_list_is_idempotent(hass: HomeAssistant) -> 
     assert coord.data[WUID]["alarm"] == []
 
 
-async def test_turn_all_alarms_skips_watch_on_fetch_error(hass: HomeAssistant, caplog) -> None:
-    """A failed enumerate fetch skips that watch entirely -- no toggles, no entity update."""
+async def test_turn_all_alarms_fetch_error_surfaces_loudly(hass: HomeAssistant, caplog) -> None:
+    """A failed enumerate fetch skips that watch's mutations AND fails loudly.
+
+    The list fetcher returns a ``FetchError`` sentinel (rather than raising) when it exhausts its
+    retries; that is a failure, not a truthy success, so on the only targeted watch the call must
+    surface an error toast -- never report silent success when the alarm list could not be read
+    (fail loud on fetch errors).
+    """
     coord = _install(hass)
     coord.controller.setEnableAlarmTime = AsyncMock(return_value=True)
     coord.controller.getWatchAlarm = AsyncMock(return_value=FetchError("Alarms", "boom"))
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING), pytest.raises(ServiceValidationError) as err:
         await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord))
 
+    assert err.value.translation_key == "nothing_actioned"
     coord.controller.setEnableAlarmTime.assert_not_awaited()
     coord.async_set_updated_data.assert_not_called()
+    assert "boom" in caplog.text
+
+
+async def test_turn_all_alarms_fetch_error_on_one_watch_is_partial_not_silent(hass: HomeAssistant, caplog) -> None:
+    """Two watches on one account: a watch whose enumerate fetch-errors is a *gap* in the partial-
+    success notification, not a silent success (fail loud on fetch errors). The other watch succeeds,
+    so the call does not raise -- but it must NOTIFY about the failed watch rather than dismissing the
+    run as clean, which is exactly what a phantom fetch-success would have produced.
+    """
+    coord = _install(hass, wuids=("watch-1", "watch-2"))
+    coord.controller.setEnableAlarmTime = AsyncMock(return_value=True)
+    # watch-1's enumerate fails; watch-2's enumerate + its post-toggle refresh both succeed.
+    coord.controller.getWatchAlarm = AsyncMock(
+        side_effect=[FetchError("Alarms", "boom"), [{"id": "a1", "status": "DISABLE"}], [{"id": "a1", "status": "ENABLE"}]]
+    )
+
+    with caplog.at_level(logging.WARNING), patch("custom_components.xplora_watch.services.persistent_notification") as pn:
+        await _service(hass, coord, XploraAlarmService).async_set_all_enabled(True, **_kwargs(coord, wuids=("watch-1", "watch-2")))
+
+    coord.controller.setEnableAlarmTime.assert_awaited_once_with("a1")  # only watch-2 toggled
+    pn.async_create.assert_called_once()  # notified about the failed watch-1 ...
+    pn.async_dismiss.assert_not_called()  # ... not dismissed as a clean success
     assert "boom" in caplog.text
 
 

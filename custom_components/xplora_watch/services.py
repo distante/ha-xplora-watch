@@ -78,6 +78,7 @@ from .log import Log
 from .pyxplora_api.exception_classes import AuthError, RateLimitError
 from .pyxplora_api.exception_classes import ConnectionError as XploraConnectionError
 from .pyxplora_api.pyxplora_api_async import FetchError
+from .pyxplora_api.status import NormalStatus
 
 # Per-account gating action phrases, shared by every Guardian-only control service. They fill the
 # `not_guardian` error's `{action}` placeholder and the per-watch "skipped: contact" warning.
@@ -232,6 +233,25 @@ def _resolve_device(hass: HomeAssistant, device_id: str) -> tuple[str, XploraDat
     return None
 
 
+def _all_alarms_in_state(fresh: list[dict[str, Any]] | FetchError, target: str) -> bool:
+    """True when a freshly-fetched alarm list shows every alarm already in ``target`` state.
+
+    Used to confirm a bulk alarm toggle against authoritative post-write state rather than the
+    write's own (ambiguous, no-op-rejecting) verdict (ADR 0012). A failed re-fetch (``FetchError``)
+    is never a confirmation. An empty list is vacuously in-state (nothing to toggle).
+    """
+    if not isinstance(fresh, list):
+        return False
+    return all(alarm.get("status") == target for alarm in fresh)
+
+
+def _alarm_in_state(fresh: list[dict[str, Any]] | FetchError, alarm_id: str, target: str) -> bool:
+    """True when a freshly-fetched alarm list shows ``alarm_id`` in ``target`` state (ADR 0012)."""
+    if not isinstance(fresh, list):
+        return False
+    return any(alarm.get("id") == alarm_id and alarm.get("status") == target for alarm in fresh)
+
+
 def _error_reason(error: Exception) -> str:
     """A short, user-facing phrase for a recoverable controller error (fills toast/notification text)."""
     if isinstance(error, RateLimitError):
@@ -316,6 +336,25 @@ class _Outcomes:
         if existing is None or _PRIORITY[kind] > _PRIORITY[existing.kind]:
             self._records[key] = _WatchOutcome(kind, account, wuid, reason)
 
+    def confirm(self, entry_id: str, wuid: str | None, account: str) -> None:
+        """Force a watch's outcome to ``succeeded`` after a post-write read confirmed the intended end
+        state (ADR 0012).
+
+        Unlike ``record``, this ignores the worst-wins priority: it *upgrades* a provisional
+        ``refused`` -- a server no-op rejection we can't distinguish from a real failure (e.g.
+        ``modifyAlarm``'s generic error) -- once a fresh fetch proves the watch is already in the
+        requested state. A ``skipped`` (never called) or ``errored`` (broken account) watch is left
+        untouched, so a genuine failure is never masked.
+        """
+        key = (entry_id, wuid)
+        existing = self._records.get(key)
+        # A bare confirm with no prior record would fabricate a success from nothing; both call sites
+        # always run `_Account.call` first, so a record exists. Guard the two kinds that must never be
+        # overwritten (a never-called `skipped` watch, a broken-account `errored`) and upgrade the rest.
+        if existing is not None and existing.kind in (_SKIPPED, _ERRORED):
+            return
+        self._records[key] = _WatchOutcome(_SUCCEEDED, account, wuid, "")
+
     @property
     def records(self) -> list[_WatchOutcome]:
         """All recorded outcomes."""
@@ -387,8 +426,11 @@ class _Account:
         Once a recoverable error (rate-limit / expired-login auth / connection) has broken this
         account, every later ``call`` short-circuits without touching the server -- the rest of the
         account's watches are expected to keep failing (ADR 0004). A returned ``False`` is a *refused*
-        (the server was reached but declined -- typically an offline watch); anything else is a
-        *success*. Returns the call result, or ``None`` when the call errored / was short-circuited.
+        (the server was reached but declined -- typically an offline watch) and a returned
+        ``FetchError`` is an *errored* fetch (a list fetcher that exhausted its retries returns this
+        sentinel instead of raising -- it must fail loudly, not read as a truthy success); anything
+        else is a *success*. Returns the call result, or ``None`` when the call errored / was
+        short-circuited.
 
         ``recover`` wraps ``factory`` in the coordinator's single-flight token-recovery gate (the
         default, for raw ``controller.*`` calls); pass ``recover=False`` for a coordinator method that
@@ -406,11 +448,22 @@ class _Account:
             self.broken = True
             self._broken_reason = reason
             return None
-        if result is False:
+        if isinstance(result, FetchError):
+            # A fetch that exhausted its retries returns this sentinel rather than raising. It is a
+            # failure, not a (truthy, non-`False`) success, so record it as errored -- otherwise a
+            # watch whose list could not be read would be counted a silent success. It does not break
+            # the account (unlike a token/rate/connection error): the caller skips just this watch.
+            self._outcomes.record(self.entry_id, wuid, self.label, _ERRORED, f"could not fetch the watch data ({result.operation})")
+        elif result is False:
             self._outcomes.record(self.entry_id, wuid, self.label, _REFUSED, action)
         else:
             self._outcomes.record(self.entry_id, wuid, self.label, _SUCCEEDED, "")
         return result
+
+    def confirm(self, wuid: str | None) -> None:
+        """Upgrade this watch's outcome to success because a post-write read confirmed the intended
+        end state (ADR 0012). Used by the alarm toggles to rescue a no-op the server refused."""
+        self._outcomes.confirm(self.entry_id, wuid, self.label)
 
 
 @callback
@@ -658,12 +711,18 @@ class XploraService:
             translation_placeholders={"details": "; ".join(_phrase(g) for g in gaps)},
         )
 
-    async def _refresh_list(self, coordinator: XploraDataUpdateCoordinator, wuid: str, data_key: str, log: Log) -> None:
-        """Re-fetch just the mutated alarm/silent list for one watch and push it to the entities.
+    async def _refresh_list(
+        self, coordinator: XploraDataUpdateCoordinator, wuid: str, data_key: str, log: Log
+    ) -> list[dict[str, Any]] | FetchError:
+        """Re-fetch just the mutated alarm/silent list for one watch, push it to the entities, and
+        return it.
 
         Uses ``async_set_updated_data`` (a single targeted fetch) rather than a full
         ``async_refresh`` poll, keeping the integration off the rate-limit radar as intended. ``log``
         is the account's logger, so a benign fetch-error warning is attributed to the right account.
+        Returns the freshly-fetched list (or the ``FetchError``) so callers can also *verify* the
+        mutation's end state against it (ADR 0012); callers that only want the entity refresh ignore
+        the return.
         """
         if data_key == ATTR_ALARM:
             new_items = await coordinator._with_recovery(lambda: coordinator.controller.getWatchAlarm(wuid))
@@ -671,11 +730,12 @@ class XploraService:
             new_items = await coordinator._with_recovery(lambda: coordinator.controller.getSilentTime(wuid))
         if isinstance(new_items, FetchError):
             log.warning("%s: %s", new_items.operation, new_items.message)
-            return
+            return new_items
         data = coordinator.data or {}
         if wuid in data:
             data[wuid][data_key] = new_items
             coordinator.async_set_updated_data(data)
+        return new_items
 
 
 class XploraSeeService(XploraService):
@@ -1017,6 +1077,8 @@ class XploraAlarmService(XploraService):
         alarm_id = data[ATTR_SERVICE_ALARM_ID]
         enabled = data[ATTR_SERVICE_ENABLED]
 
+        target = NormalStatus.ENABLE.value if enabled else NormalStatus.DISABLE.value
+
         async def body(account: _Account) -> None:
             coordinator = account.coordinator
             targets = account.targets(guardian=True, action=_ACTION_ALARMS)
@@ -1030,7 +1092,13 @@ class XploraAlarmService(XploraService):
                 return
             account.log.debug("Set alarm %s enabled=%s: %s", alarm_id, enabled, ok)
             for wuid in targets:
-                await self._refresh_list(coordinator, wuid, ATTR_ALARM, account.log)
+                fresh = await self._refresh_list(coordinator, wuid, ATTR_ALARM, account.log)
+                # A no-op modifyAlarm is rejected with a generic error we can't distinguish from a
+                # real failure (ref:XW-016), so we trust the re-fetched state, not the write's
+                # verdict: if the alarm is already in the requested state, confirm success (ADR 0012).
+                # The toggled alarm lives on targets[0], so that is the outcome we upgrade.
+                if wuid == targets[0] and _alarm_in_state(fresh, alarm_id, target):
+                    account.confirm(targets[0])
 
         await self._fan_out(data, ATTR_SERVICE_SET_ALARM_ENABLED, body)
 
@@ -1044,6 +1112,7 @@ class XploraAlarmService(XploraService):
         """
         data = kwargs["kwargs"]
         action = "Turn all alarms on" if enabled else "Turn all alarms off"
+        target = NormalStatus.ENABLE.value if enabled else NormalStatus.DISABLE.value
 
         async def body(account: _Account) -> None:
             coordinator = account.coordinator
@@ -1065,7 +1134,15 @@ class XploraAlarmService(XploraService):
                     account.log.debug("Set alarm %s enabled=%s", aid, enabled)
                 if account.broken:
                     continue  # skip the refresh; the next watch's call short-circuits anyway
-                await self._refresh_list(coordinator, wuid, ATTR_ALARM, account.log)
+                fresh = await self._refresh_list(coordinator, wuid, ATTR_ALARM, account.log)
+                # Setting an alarm to the state it already has makes the server reject the write with
+                # a generic error indistinguishable from a real failure (ref:XW-016), so a genuine
+                # no-op looks like a refusal. Trust the re-fetched state instead: when every alarm is
+                # already in the requested state, the intent holds and we confirm success (ADR 0012).
+                # If any alarm is still off-target the provisional refusal stands, so a real failure
+                # fails loudly.
+                if _all_alarms_in_state(fresh, target):
+                    account.confirm(wuid)
 
         await self._fan_out(data, ATTR_SERVICE_TURN_ALL_ALARMS_ON if enabled else ATTR_SERVICE_TURN_ALL_ALARMS_OFF, body)
 
