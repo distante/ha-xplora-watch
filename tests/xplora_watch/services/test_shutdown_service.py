@@ -60,7 +60,7 @@ async def test_shutdown_rejected_by_backend_logs_warning_and_raises_watch_offlin
     # via a per-watch warning, and -- since that refused watch was the only target, so nothing
     # succeeded -- surfaces the homogeneous `watch_offline` error toast (ADR 0004), never a silent
     # success.
-    graphql_operations["ShutDown"] = {"data": {"ShutDown": False}}
+    graphql_operations["ShutDown"] = {"data": {"shutDown": False}}
     devices = await setup_service_target(hass, coordinator)
 
     with caplog.at_level(logging.WARNING), pytest.raises(ServiceValidationError) as err:

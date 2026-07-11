@@ -742,13 +742,13 @@ class PyXploraApi(PyXplora):
 
     async def setEnableSilentTime(self, silent_id: str) -> bool:
         retries = 0
-        result = ""
+        result: Any = None
 
         while not result and retries < self.maxRetries + 2:
             retries += 1
             try:
-                response = await self._gql_handler.setEnableSilentTime_a(silent_id)
-                result = response.get("setEnableSlientTime", False)
+                # `run_command` reads the response positionally (ADR 0010) -- no response-field key here.
+                result = await self._gql_handler.setEnableSilentTime_a(silent_id)
             except Error as error:
                 _LOGGER.debug(error)
 
@@ -759,13 +759,12 @@ class PyXploraApi(PyXplora):
 
     async def setDisableSilentTime(self, silent_id: str) -> bool:
         retry_counter = 0
-        result = ""
+        result: Any = None
 
         while not result and retry_counter < self.maxRetries + 2:
             retry_counter += 1
             try:
-                disable_raw = await self._gql_handler.setEnableSilentTime_a(silent_id, NormalStatus.DISABLE.value)
-                result = disable_raw.get("setEnableSlientTime", False)
+                result = await self._gql_handler.setEnableSilentTime_a(silent_id, NormalStatus.DISABLE.value)
             except Error as error:
                 _LOGGER.debug(error)
             if not result:
@@ -790,15 +789,16 @@ class PyXploraApi(PyXplora):
 
     async def setAlarmTime(self, alarm_id: str, status: NormalStatus) -> bool:
         retryCounter = 0
-        result = ""
+        result: Any = None
         while not result and (retryCounter < self.maxRetries + 2):
             retryCounter += 1
             try:
-                raw = await self._gql_handler.setEnableAlarmTime_a(alarm_id, status.value)
-                modifyAlarm = raw.get("modifyAlarm", -1)
-                if not modifyAlarm:
-                    return False
-                result = modifyAlarm
+                # `run_command` reads the response positionally (ADR 0010) -- no response-field key here.
+                # A returned value (even a falsy refusal) is the server's authoritative answer: the watch
+                # was reached and gave a verdict, so return it immediately rather than retrying an action
+                # it already declined (wasted traffic / ban hygiene). The retry loop below is reserved for
+                # connection/`Error` failures, which raise and fall through to the backoff.
+                return bool(await self._gql_handler.setEnableAlarmTime_a(alarm_id, status.value))
             except Error as error:
                 _LOGGER.debug(error)
             if not result:
@@ -832,8 +832,8 @@ class PyXploraApi(PyXplora):
         while not result and retry_counter < self.maxRetries + 2:
             retry_counter += 1
             try:
-                raw = await self._gql_handler.addAlarmTime_a(wuid, occur_min, occur_min, week_repeat, name, end)
-                result = raw.get("addAlarm")
+                # `run_command` reads the response positionally (ADR 0010) -- no response-field key here.
+                result = await self._gql_handler.addAlarmTime_a(wuid, occur_min, occur_min, week_repeat, name, end)
             except Error as error:
                 _LOGGER.debug(error)
             if not result:
@@ -855,10 +855,9 @@ class PyXploraApi(PyXplora):
         while not result and retry_counter < self.maxRetries + 2:
             retry_counter += 1
             try:
-                raw = await self._gql_handler.modifyAlarmTime_a(
+                result = await self._gql_handler.modifyAlarmTime_a(
                     alarm_id, occur_min, start, week_repeat, name, status.value if status else None
                 )
-                result = raw.get("modifyAlarm")
             except Error as error:
                 _LOGGER.debug(error)
             if not result:
@@ -872,8 +871,7 @@ class PyXploraApi(PyXplora):
         while not result and retry_counter < self.maxRetries + 2:
             retry_counter += 1
             try:
-                raw = await self._gql_handler.removeAlarmTime_a(alarm_id)
-                result = raw.get("removeAlarm")
+                result = await self._gql_handler.removeAlarmTime_a(alarm_id)
             except Error as error:
                 _LOGGER.debug(error)
             if not result:
@@ -887,8 +885,8 @@ class PyXploraApi(PyXplora):
         while not result and retry_counter < self.maxRetries + 2:
             retry_counter += 1
             try:
-                raw = await self._gql_handler.addSilentTime_a(wuid, start, end, week_repeat, description)
-                result = raw.get("addSilentTime")
+                # `run_command` reads the response positionally (ADR 0010) -- no response-field key here.
+                result = await self._gql_handler.addSilentTime_a(wuid, start, end, week_repeat, description)
             except Error as error:
                 _LOGGER.debug(error)
             if not result:
@@ -904,8 +902,7 @@ class PyXploraApi(PyXplora):
         while not result and retry_counter < self.maxRetries + 2:
             retry_counter += 1
             try:
-                raw = await self._gql_handler.modifySilentTime_a(silent_id, start, end, week_repeat)
-                result = raw.get("modifySilentTime")
+                result = await self._gql_handler.modifySilentTime_a(silent_id, start, end, week_repeat)
             except Error as error:
                 _LOGGER.debug(error)
             if not result:
@@ -919,8 +916,7 @@ class PyXploraApi(PyXplora):
         while not result and retry_counter < self.maxRetries + 2:
             retry_counter += 1
             try:
-                raw = await self._gql_handler.removeSilentTime_a(silent_id)
-                result = raw.get("removeSilentTime")
+                result = await self._gql_handler.removeSilentTime_a(silent_id)
             except Error as error:
                 _LOGGER.debug(error)
             if not result:
@@ -945,11 +941,12 @@ class PyXploraApi(PyXplora):
 
     async def shutdown(self, wuid: str) -> bool:
         """Send the watch a shutdown command. Control is gated for Contacts a layer up, in the HA service handlers (ref:XW-009)."""
-        return await self._gql_handler.shutdown_a(wuid)
+        # `run_command` reads the response positionally (ADR 0010); coerce the accept/reject value to bool.
+        return bool(await self._gql_handler.shutdown_a(wuid))
 
     async def reboot(self, wuid: str) -> bool:
         """Send the watch a reboot command. Control is gated for Contacts a layer up, in the HA service handlers (ref:XW-009)."""
-        return await self._gql_handler.reboot_a(wuid)
+        return bool(await self._gql_handler.reboot_a(wuid))
 
     async def getFollowRequestWatchCount(self) -> int:
         c: dict[str, Any] = await self._gql_handler.getFollowRequestWatchCount_a()

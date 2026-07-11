@@ -62,7 +62,7 @@ async def test_reboot_auth_error_logs_clean_after_bounded_recovery(
     # superseded by centralization -- the single-flight gate makes the re-login storm-safe.)
     # Since nothing succeeded, the service now surfaces an error toast rather than returning silently
     # (best-effort fan-out, ADR 0004); the clean per-type warning is still logged (no raw traceback).
-    graphql_operations["reboot"] = {"errors": [{"code": "E000004"}], "data": {"reboot": None}}
+    graphql_operations["Reboot"] = {"errors": [{"code": "E000004"}], "data": {"reboot": None}}
     devices = await setup_service_target(hass, coordinator)
 
     with caplog.at_level(logging.DEBUG), pytest.raises(ServiceValidationError) as err:

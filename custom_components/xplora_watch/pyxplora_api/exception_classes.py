@@ -127,6 +127,28 @@ class AuthError(Exception):
         super().__init__(self.message)
 
 
+class XploraProtocolError(Exception):
+    """Raised when a watch control-action response has an impossible shape.
+
+    ``GQLHandler.run_command`` reads a control-action response positionally -- the single value
+    of ``data`` (ADR 0010). Exactly one field always comes back, so more than one key can only
+    mean a code bug or a server schema change. That is surfaced loudly here rather than silently
+    defaulting to a refusal.
+
+    Deliberately does NOT subclass ``Error`` (mirrors ``RateLimitError`` / ``AuthError``): every
+    ``except Error`` retry loop in this package would otherwise swallow it and, after retries,
+    return a falsy non-success -- which the service layer maps to ``watch_offline``. That would
+    hide a real signal behind a misleading "offline" message, the exact failure mode ADR 0010
+    prevents. Letting it propagate keeps it visible.
+    """
+
+    def __init__(self, command: object, data: dict[str, object]) -> None:
+        self.command = command
+        self.data = data
+        operation = getattr(command, "operation_name", command)
+        super().__init__(f"Watch command {operation!r} returned an unexpected multi-field response: {sorted(data)}")
+
+
 class ConnectionError(Error):  # noqa: A001 -- intentionally named to mirror the failure it wraps
     """Raised when the transport fails before any GraphQL response body exists.
 

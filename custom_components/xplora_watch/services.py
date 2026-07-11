@@ -598,6 +598,11 @@ class XploraService:
         watches (handled inside ``_Account.call``) but the fan-out still runs ``body`` for the next
         account. ``service`` is the Home Assistant service name -- it keys the partial-success
         notification so it replaces/self-heals across repeated runs.
+
+        The one exception is a non-recoverable ``XploraProtocolError`` (an impossible control-action
+        response shape; ADR 0010): it is deliberately not caught here or in ``_Account.call``, so it
+        aborts the whole fan-out. That command is malformed for every remaining watch, so -- unlike an
+        independent per-account error -- there is no best-effort work left to attempt (ADR 0004).
         """
         outcomes = _Outcomes()
         for group in self._accounts(data):

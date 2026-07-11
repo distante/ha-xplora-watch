@@ -317,12 +317,12 @@ def make_delete_chat_message_payload(success: bool = True) -> dict[str, Any]:
 
 
 def make_shutdown_payload(success: bool = True) -> dict[str, Any]:
-    """Response for the ``ShutDown`` mutation (field matched case-insensitively to the op name)."""
-    return {"ShutDown": success}
+    """Response for the ``ShutDown`` mutation (selects the field ``shutDown``)."""
+    return {"shutDown": success}
 
 
 def make_reboot_payload(success: bool = True) -> dict[str, Any]:
-    """Response for the ``reboot`` mutation (field matched case-insensitively to the op name)."""
+    """Response for the ``Reboot`` mutation (selects the field ``reboot``)."""
     return {"reboot": success}
 
 
@@ -332,13 +332,38 @@ def make_expire_token_payload(token: str = "expired-token-1") -> dict[str, Any]:
 
 
 def make_modify_alarm_payload(success: bool = True) -> dict[str, Any]:
-    """Response for the ``ModifyAlarm`` mutation."""
+    """Response for the ``ModifyAlarm`` mutation (selects the field ``modifyAlarm``)."""
     return {"modifyAlarm": success}
 
 
+def make_remove_alarm_payload(success: bool = True) -> dict[str, Any]:
+    """Response for the ``RemoveAlarm`` mutation (selects the field ``removeAlarm``)."""
+    return {"removeAlarm": success}
+
+
+def make_add_alarm_payload(alarm_id: str = "alarm-new-1") -> dict[str, Any]:
+    """Response for the ``AddAlarm`` create mutation (callers read ``{ id }``)."""
+    return {"addAlarm": {"id": alarm_id}}
+
+
 def make_set_enable_silent_time_payload(success: bool = True) -> dict[str, Any]:
-    """Response for the ``SetEnableSlientTime`` mutation."""
-    return {"setEnableSlientTime": success}
+    """Response for the ``SetEnableSilentTime`` mutation (selects the field ``setEnableSilentTime``)."""
+    return {"setEnableSilentTime": success}
+
+
+def make_modify_silent_time_payload(success: bool = True) -> dict[str, Any]:
+    """Response for the ``ModifySilentTime`` mutation (selects the field ``modifySilentTime``)."""
+    return {"modifySilentTime": success}
+
+
+def make_remove_silent_time_payload(success: bool = True) -> dict[str, Any]:
+    """Response for the ``RemoveSilentTime`` mutation (selects the field ``removeSilentTime``)."""
+    return {"removeSilentTime": success}
+
+
+def make_add_silent_time_payload(silent_id: str = "silent-new-1") -> dict[str, Any]:
+    """Response for the ``AddSilentTime`` create mutation (callers read ``{ id }``)."""
+    return {"addSilentTime": {"id": silent_id}}
 
 
 def make_fetch_chat_voice_payload() -> dict[str, Any]:
@@ -382,10 +407,15 @@ DEFAULT_OPERATION_PAYLOADS: dict[str, dict[str, Any]] = {
     "SendChatText": make_send_chat_text_payload(),
     "DeleteChatMessage": make_delete_chat_message_payload(),
     "ShutDown": make_shutdown_payload(),
-    "reboot": make_reboot_payload(),
+    "Reboot": make_reboot_payload(),
     "ExpireToken": make_expire_token_payload(),
     "ModifyAlarm": make_modify_alarm_payload(),
-    "SetEnableSlientTime": make_set_enable_silent_time_payload(),
+    "RemoveAlarm": make_remove_alarm_payload(),
+    "AddAlarm": make_add_alarm_payload(),
+    "SetEnableSilentTime": make_set_enable_silent_time_payload(),
+    "ModifySilentTime": make_modify_silent_time_payload(),
+    "RemoveSilentTime": make_remove_silent_time_payload(),
+    "AddSilentTime": make_add_silent_time_payload(),
     "FetchChatVoice": make_fetch_chat_voice_payload(),
     "FetchChatImage": make_fetch_chat_image_payload(),
     "FetchChatShortVideo": make_fetch_chat_short_video_payload(),

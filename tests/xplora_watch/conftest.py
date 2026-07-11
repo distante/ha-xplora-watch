@@ -50,6 +50,7 @@ from custom_components.xplora_watch.coordinator import XploraDataUpdateCoordinat
 from custom_components.xplora_watch.pyxplora_api.const import ENDPOINT
 from custom_components.xplora_watch.services import async_setup_services
 
+from .fixtures.command_oracle import ORACLE_BY_FIELD, parse_command_query
 from .fixtures.graphql_payloads import DEFAULT_OPERATION_PAYLOADS, DEFAULT_WUID
 from .fixtures.rest_payloads import (
     ENTITY_PICTURE_BODY,
@@ -119,9 +120,19 @@ def graphql_operations() -> dict[str, dict[str, Any]]:
 def _make_graphql_callback(operations: dict[str, dict[str, Any]]):
     def _callback(url: Any, **kwargs: Any) -> CallbackResult:
         body = kwargs.get("json") or {}
+        query = body.get("query", "")
+        # Seam-1 hardening (ADR 0010): every outgoing control-action query must be equivalent to the
+        # server-proven oracle for its field -- same selected field, argument types, and argument-to-
+        # variable wiring. A generated command whose field/args drift from what the real server accepts
+        # trips this loudly, for free, on any test that fires a control action. Non-command queries are
+        # not enforced.
+        parsed = parse_command_query(query)
+        if parsed.field in ORACLE_BY_FIELD:
+            assert parsed == ORACLE_BY_FIELD[parsed.field], (
+                f"outgoing command query for {parsed.field!r} diverged from the proven oracle: {parsed} != {ORACLE_BY_FIELD[parsed.field]}"
+            )
         operation_name = body.get("operationName")
         if operation_name is None:
-            query = body.get("query", "")
             match = re.search(r"(?:query|mutation)\s+(\w+)", query)
             operation_name = match.group(1) if match else None
         payload = operations.get(operation_name)

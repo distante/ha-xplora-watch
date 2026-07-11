@@ -10,11 +10,12 @@ import aiohttp
 from . import gql_mutations as gm
 from . import gql_queries as gq
 from .const import ENDPOINT
-from .exception_classes import AUTH_TOKEN_EXPIRED_CODE, AuthError, HandlerException, LoginError
+from .exception_classes import AUTH_TOKEN_EXPIRED_CODE, AuthError, HandlerException, LoginError, XploraProtocolError
 from .graphql_client import GraphqlClient
 from .handler_gql import HandlerGQL
 from .model import Chats, ChatsNew
 from .status import EmailAndPhoneVerificationTypeV2, NormalStatus, UserContactType
+from .watch_commands import WatchCommand
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -127,23 +128,30 @@ class GQLHandler(HandlerGQL):
 
         return self.issueToken, self.refreshToken
 
-    async def _runControlMutation_a(self, query: str, variables: dict[str, Any], operation_name: str) -> bool:
-        """Run a fire-and-forget device-control mutation (`ShutDown` / `reboot`) and return the
-        server's accept/reject `Boolean`.
+    async def run_command(self, command: WatchCommand, variables: dict[str, Any]) -> Any:
+        """Run a watch control-action mutation and return the single value of its response.
 
-        This low-level sender performs no role check: the mutation goes on the wire as a bare
-        `shutDown(uid)` / `reboot(uid)` with no `guardianType` precondition. Restricting control to
+        The query text and operation name are generated from the command's server-owned GraphQL
+        field (ADR 0010), and the result is read positionally as the one value in `data` -- no
+        hand-written response-field key exists to mistype. Routed through `runAuthorizedGqlQuery_a`,
+        so an `E000004` still raises `AuthError` for the normal token-refresh recovery.
+
+        The mutation goes on the wire with no `guardianType` precondition; restricting control to
         the watch's Guardian is a client policy applied a layer up, in the Home Assistant service
-        handlers (a Contact's reboot/shutdown is refused there, ref:XW-009). Routed through
-        `runAuthorizedGqlQuery_a`, so an `E000004` still raises `AuthError` for the normal recovery.
+        handlers (a Contact's reboot/shutdown is refused there, ref:XW-009).
+
+        Read contract: a single-key `data` returns that key's value (a `Boolean`, or the `{ id, ...}`
+        object for a create). An empty/null `data` returns `None` -- a non-success that stays a
+        refusal (-> `watch_offline`, unchanged). More than one key is an impossible shape (schema
+        drift or a code bug), raised as `XploraProtocolError` rather than silently defaulted.
         """
-        data: dict[str, Any] = (await self.runAuthorizedGqlQuery_a(query, variables, operation_name)).get("data", {})
-        # The response field name matches the operation name case-insensitively (`ShutDown` ->
-        # `shutDown`, `reboot` -> `reboot`).
-        for k in data:
-            if k.upper() == operation_name.upper():
-                return bool(data.get(k, False))
-        return False
+        resp = await self.runAuthorizedGqlQuery_a(command.query, variables, command.operation_name)
+        data = resp.get("data") or {}
+        if not data:
+            return None
+        if len(data) != 1:
+            raise XploraProtocolError(command, data)
+        return next(iter(data.values()))
 
     ########## SECTION QUERY start ##########
 
@@ -497,11 +505,11 @@ class GQLHandler(HandlerGQL):
     async def addStep_a(self, stepCount: int) -> dict[str, Any]:
         return (await self.runAuthorizedGqlQuery_a(gm.STEP_M.get("addM", ""), {"stepCount": stepCount}, "AddStep")).get("data", {})
 
-    async def shutdown_a(self, wuid: str) -> bool:
-        return await self._runControlMutation_a(gm.WATCH_M.get("shutdownM", ""), {"uid": wuid}, "ShutDown")
+    async def shutdown_a(self, wuid: str) -> Any:
+        return await self.run_command(WatchCommand.SHUTDOWN, {"uid": wuid})
 
-    async def reboot_a(self, wuid: str) -> bool:
-        return await self._runControlMutation_a(gm.WATCH_M.get("rebootM", ""), {"uid": wuid}, "reboot")
+    async def reboot_a(self, wuid: str) -> Any:
+        return await self.run_command(WatchCommand.REBOOT, {"uid": wuid})
 
     async def modifyAlert_a(self, _id: str, yesOrNo: str) -> dict[str, Any]:
         # function?
@@ -509,28 +517,17 @@ class GQLHandler(HandlerGQL):
             "data", {}
         )
 
-    async def setEnableSilentTime_a(self, silent_id: str, status: str = NormalStatus.ENABLE.value) -> dict[str, Any]:
-        return (
-            await self.runAuthorizedGqlQuery_a(
-                gm.WATCH_M.get("setEnableSlientTimeM", ""), {"silentId": silent_id, "status": status}, "SetEnableSlientTime"
-            )
-        ).get("data", {})
+    async def setEnableSilentTime_a(self, silent_id: str, status: str = NormalStatus.ENABLE.value) -> Any:
+        return await self.run_command(WatchCommand.SET_ENABLE_SILENT_TIME, {"silentId": silent_id, "status": status})
 
-    async def setEnableAlarmTime_a(self, alarm_id: str, status: str = NormalStatus.ENABLE.value) -> dict[str, Any]:
-        return (
-            await self.runAuthorizedGqlQuery_a(gm.WATCH_M.get("modifyAlarmM", ""), {"alarmId": alarm_id, "status": status}, "ModifyAlarm")
-        ).get("data", {})
+    async def setEnableAlarmTime_a(self, alarm_id: str, status: str = NormalStatus.ENABLE.value) -> Any:
+        return await self.run_command(WatchCommand.MODIFY_ALARM, {"alarmId": alarm_id, "status": status})
 
-    async def addAlarmTime_a(
-        self, wuid: str, occur_min: int, start: int, week_repeat: str, name: str = "", end: int | None = None
-    ) -> dict[str, Any]:
-        return (
-            await self.runAuthorizedGqlQuery_a(
-                gm.WATCH_M.get("addAlarmM", ""),
-                {"uid": wuid, "name": name, "occurMin": occur_min, "start": start, "end": end, "weekRepeat": week_repeat},
-                "AddAlarm",
-            )
-        ).get("data", {})
+    async def addAlarmTime_a(self, wuid: str, occur_min: int, start: int, week_repeat: str, name: str = "", end: int | None = None) -> Any:
+        return await self.run_command(
+            WatchCommand.ADD_ALARM,
+            {"uid": wuid, "name": name, "occurMin": occur_min, "start": start, "end": end, "weekRepeat": week_repeat},
+        )
 
     async def modifyAlarmTime_a(
         self,
@@ -540,7 +537,7 @@ class GQLHandler(HandlerGQL):
         week_repeat: str | None = None,
         name: str | None = None,
         status: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         # Only forward the variables the caller actually set; the mutation declares them all optional.
         variables: dict[str, Any] = {"alarmId": alarm_id}
         if occur_min is not None:
@@ -553,21 +550,16 @@ class GQLHandler(HandlerGQL):
             variables["name"] = name
         if status is not None:
             variables["status"] = status
-        return (await self.runAuthorizedGqlQuery_a(gm.WATCH_M.get("modifyAlarmM", ""), variables, "ModifyAlarm")).get("data", {})
+        return await self.run_command(WatchCommand.MODIFY_ALARM, variables)
 
-    async def removeAlarmTime_a(self, alarm_id: str) -> dict[str, Any]:
-        return (await self.runAuthorizedGqlQuery_a(gm.WATCH_M.get("removeAlarmM", ""), {"alarmId": alarm_id}, "RemoveAlarm")).get(
-            "data", {}
+    async def removeAlarmTime_a(self, alarm_id: str) -> Any:
+        return await self.run_command(WatchCommand.REMOVE_ALARM, {"alarmId": alarm_id})
+
+    async def addSilentTime_a(self, wuid: str, start: int, end: int, week_repeat: str, description: str = "") -> Any:
+        return await self.run_command(
+            WatchCommand.ADD_SILENT_TIME,
+            {"uid": wuid, "start": start, "end": end, "weekRepeat": week_repeat, "description": description},
         )
-
-    async def addSilentTime_a(self, wuid: str, start: int, end: int, week_repeat: str, description: str = "") -> dict[str, Any]:
-        return (
-            await self.runAuthorizedGqlQuery_a(
-                gm.WATCH_M.get("addSilentTimeM", ""),
-                {"uid": wuid, "start": start, "end": end, "weekRepeat": week_repeat, "description": description},
-                "AddSilentTime",
-            )
-        ).get("data", {})
 
     async def modifySilentTime_a(
         self,
@@ -575,7 +567,7 @@ class GQLHandler(HandlerGQL):
         start: int | None = None,
         end: int | None = None,
         week_repeat: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         # Only forward the variables the caller actually set; the mutation declares them all optional.
         variables: dict[str, Any] = {"silentId": silent_id}
         if start is not None:
@@ -584,12 +576,10 @@ class GQLHandler(HandlerGQL):
             variables["end"] = end
         if week_repeat is not None:
             variables["weekRepeat"] = week_repeat
-        return (await self.runAuthorizedGqlQuery_a(gm.WATCH_M.get("modifySilentTimeM", ""), variables, "ModifySilentTime")).get("data", {})
+        return await self.run_command(WatchCommand.MODIFY_SILENT_TIME, variables)
 
-    async def removeSilentTime_a(self, silent_id: str) -> dict[str, Any]:
-        return (
-            await self.runAuthorizedGqlQuery_a(gm.WATCH_M.get("removeSilentTimeM", ""), {"silentId": silent_id}, "RemoveSilentTime")
-        ).get("data", {})
+    async def removeSilentTime_a(self, silent_id: str) -> Any:
+        return await self.run_command(WatchCommand.REMOVE_SILENT_TIME, {"silentId": silent_id})
 
     async def setReadChatMsg_a(self, wuid: str, msgId: str, _id: str) -> dict[str, Any]:
         return (
