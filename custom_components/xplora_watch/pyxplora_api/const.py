@@ -33,10 +33,13 @@ class GqlOperation(StrEnum):
 
     The single source of truth for the operation-name strings that are otherwise sprinkled as
     literals across the request layer and the tests (which route/count requests by operationName).
-    Values must match the names embedded in the queries/mutations verbatim -- including the
-    upstream `SlientTimes` typo -- so they line up with what the server (and the test transport)
-    dispatches on. `StrEnum` members compare/hash as their string value, so they drop in anywhere a
-    plain operationName string is expected.
+    Values must match the operation names embedded in the queries/mutations verbatim so they line up
+    with what the test transport dispatches on -- the server dispatches on the selected field, not
+    the client-chosen operationName, so for a single-operation document this matching is a
+    client/test concern only. Where a value looks misspelled (e.g. `SlientTimes`) that spelling is
+    intentional and must be preserved verbatim -- do not "correct" it (ref:XW-011). `StrEnum`
+    members compare/hash as their string value, so they drop in anywhere a plain operationName
+    string is expected.
     """
 
     DEVICE_LIST = "deviceList"
@@ -44,7 +47,7 @@ class GqlOperation(StrEnum):
     CHECK_WATCH_BY_QR_CODE = "CheckWatchByQrCode"
     ALARMS = "Alarms"
     SAFE_ZONES = "SafeZones"
-    SILENT_TIMES = "SlientTimes"  # upstream operation name carries this typo
+    SILENT_TIMES = "SlientTimes"  # spelling intentional -- keep verbatim (ref:XW-011)
     ASK_WATCH_LOCATE = "AskWatchLocate"
     WATCH_LAST_LOCATE = "WatchLastLocate"
     CHATS = "Chats"
