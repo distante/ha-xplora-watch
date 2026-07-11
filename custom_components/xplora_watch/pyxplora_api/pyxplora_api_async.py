@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -789,37 +790,35 @@ class PyXploraApi(PyXplora):
             ]
         return FetchError("SlientTimes", "Failed to fetch silent times after retries")
 
-    async def setEnableSilentTime(self, silent_id: str) -> bool:
-        retries = 0
-        result: Any = None
+    async def _run_control_action(self, action: Callable[[], Awaitable[Any]]) -> bool:
+        """Run a watch control-action mutation, fast-failing on any answer the server gives.
 
-        while not result and retries < self.maxRetries + 2:
-            retries += 1
+        Any value ``action`` *returns* -- a ``Boolean``, a create's ``{ id }`` object, or the ``None``
+        of an empty/null ``data`` envelope -- means the watch was reached and gave a verdict, so we
+        coerce it to ``bool`` and return immediately without retrying: re-sending a mutation a reached
+        watch already refused cannot change the answer, it is only wasted traffic (ban hygiene). Only a
+        *raised* recoverable failure re-enters the loop via ``except Error`` -- in practice a transport
+        ``ConnectionError`` (a network blip / timeout), the sole recoverable member of the ``Error`` family
+        a control action raises -- backing off ``retryDelay`` between attempts. ``RateLimitError`` (HTTP
+        429), ``AuthError`` (expired token) and ``XploraProtocolError`` deliberately do NOT subclass
+        ``Error``, so they propagate immediately without retry -- resending a rate-limited request would
+        deepen a ban, and an expired token needs a refresh (driven by the coordinator), not a blind
+        resend. See ADR 0013.
+        """
+        for attempt in range(self.maxRetries + 2):
             try:
-                # `run_command` reads the response positionally (ADR 0010) -- no response-field key here.
-                result = await self._gql_handler.setEnableSilentTime_a(silent_id)
+                return bool(await action())  # any returned value is the server's authoritative answer
             except Error as error:
                 _LOGGER.debug(error)
+                if attempt < self.maxRetries + 1:  # no sleep after the final failed attempt
+                    await asyncio.sleep(self.retryDelay)
+        return False
 
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-
-        return bool(result)
+    async def setEnableSilentTime(self, silent_id: str) -> bool:
+        return await self._run_control_action(lambda: self._gql_handler.setEnableSilentTime_a(silent_id))
 
     async def setDisableSilentTime(self, silent_id: str) -> bool:
-        retry_counter = 0
-        result: Any = None
-
-        while not result and retry_counter < self.maxRetries + 2:
-            retry_counter += 1
-            try:
-                result = await self._gql_handler.setEnableSilentTime_a(silent_id, NormalStatus.DISABLE.value)
-            except Error as error:
-                _LOGGER.debug(error)
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-
-        return bool(result)
+        return await self._run_control_action(lambda: self._gql_handler.setEnableSilentTime_a(silent_id, NormalStatus.DISABLE.value))
 
     async def setAllEnableSilentTime(self, wuid: str) -> list[bool]:
         results = []
@@ -837,22 +836,7 @@ class PyXploraApi(PyXplora):
         return results
 
     async def setAlarmTime(self, alarm_id: str, status: NormalStatus) -> bool:
-        retryCounter = 0
-        result: Any = None
-        while not result and (retryCounter < self.maxRetries + 2):
-            retryCounter += 1
-            try:
-                # `run_command` reads the response positionally (ADR 0010) -- no response-field key here.
-                # A returned value (even a falsy refusal) is the server's authoritative answer: the watch
-                # was reached and gave a verdict, so return it immediately rather than retrying an action
-                # it already declined (wasted traffic / ban hygiene). The retry loop below is reserved for
-                # connection/`Error` failures, which raise and fall through to the backoff.
-                return bool(await self._gql_handler.setEnableAlarmTime_a(alarm_id, status.value))
-            except Error as error:
-                _LOGGER.debug(error)
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-        return bool(result)
+        return await self._run_control_action(lambda: self._gql_handler.setEnableAlarmTime_a(alarm_id, status.value))
 
     async def setEnableAlarmTime(self, alarm_id: str) -> bool:
         return await self.setAlarmTime(alarm_id, NormalStatus.ENABLE)
@@ -876,18 +860,7 @@ class PyXploraApi(PyXplora):
         """Create a new alarm on a watch. `occur_min`/`end` are minutes since midnight; the
         alarm's `start` mirrors `occurMin` (both represent the same instant for a
         point-in-time alarm)."""
-        retry_counter = 0
-        result: Any = None
-        while not result and retry_counter < self.maxRetries + 2:
-            retry_counter += 1
-            try:
-                # `run_command` reads the response positionally (ADR 0010) -- no response-field key here.
-                result = await self._gql_handler.addAlarmTime_a(wuid, occur_min, occur_min, week_repeat, name, end)
-            except Error as error:
-                _LOGGER.debug(error)
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-        return bool(result)
+        return await self._run_control_action(lambda: self._gql_handler.addAlarmTime_a(wuid, occur_min, occur_min, week_repeat, name, end))
 
     async def modifyAlarmTime(
         self,
@@ -898,79 +871,28 @@ class PyXploraApi(PyXplora):
         status: NormalStatus | None = None,
     ) -> bool:
         """Modify an existing alarm's time (`occur_min`), repeat days, name and/or status."""
-        retry_counter = 0
-        result: Any = None
         start = occur_min  # keep `start` in sync with `occurMin` for point-in-time alarms
-        while not result and retry_counter < self.maxRetries + 2:
-            retry_counter += 1
-            try:
-                result = await self._gql_handler.modifyAlarmTime_a(
-                    alarm_id, occur_min, start, week_repeat, name, status.value if status else None
-                )
-            except Error as error:
-                _LOGGER.debug(error)
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-        return bool(result)
+        return await self._run_control_action(
+            lambda: self._gql_handler.modifyAlarmTime_a(alarm_id, occur_min, start, week_repeat, name, status.value if status else None)
+        )
 
     async def removeAlarmTime(self, alarm_id: str) -> bool:
         """Delete an alarm from a watch."""
-        retry_counter = 0
-        result: Any = None
-        while not result and retry_counter < self.maxRetries + 2:
-            retry_counter += 1
-            try:
-                result = await self._gql_handler.removeAlarmTime_a(alarm_id)
-            except Error as error:
-                _LOGGER.debug(error)
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-        return bool(result)
+        return await self._run_control_action(lambda: self._gql_handler.removeAlarmTime_a(alarm_id))
 
     async def addSilentTime(self, wuid: str, start: int, end: int, week_repeat: str, description: str = "") -> bool:
         """Create a new silent-time window. `start`/`end` are minutes since midnight."""
-        retry_counter = 0
-        result: Any = None
-        while not result and retry_counter < self.maxRetries + 2:
-            retry_counter += 1
-            try:
-                # `run_command` reads the response positionally (ADR 0010) -- no response-field key here.
-                result = await self._gql_handler.addSilentTime_a(wuid, start, end, week_repeat, description)
-            except Error as error:
-                _LOGGER.debug(error)
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-        return bool(result)
+        return await self._run_control_action(lambda: self._gql_handler.addSilentTime_a(wuid, start, end, week_repeat, description))
 
     async def modifySilentTime(
         self, silent_id: str, start: int | None = None, end: int | None = None, week_repeat: str | None = None
     ) -> bool:
         """Modify an existing silent-time window's start/end (minutes since midnight) and/or repeat days."""
-        retry_counter = 0
-        result: Any = None
-        while not result and retry_counter < self.maxRetries + 2:
-            retry_counter += 1
-            try:
-                result = await self._gql_handler.modifySilentTime_a(silent_id, start, end, week_repeat)
-            except Error as error:
-                _LOGGER.debug(error)
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-        return bool(result)
+        return await self._run_control_action(lambda: self._gql_handler.modifySilentTime_a(silent_id, start, end, week_repeat))
 
     async def removeSilentTime(self, silent_id: str) -> bool:
         """Delete a silent-time window from a watch."""
-        retry_counter = 0
-        result: Any = None
-        while not result and retry_counter < self.maxRetries + 2:
-            retry_counter += 1
-            try:
-                result = await self._gql_handler.removeSilentTime_a(silent_id)
-            except Error as error:
-                _LOGGER.debug(error)
-            if not result:
-                await asyncio.sleep(self.retryDelay)
-        return bool(result)
+        return await self._run_control_action(lambda: self._gql_handler.removeSilentTime_a(silent_id))
 
     async def sendText(self, text: str, wuid: str) -> bool:
         # sender is login User

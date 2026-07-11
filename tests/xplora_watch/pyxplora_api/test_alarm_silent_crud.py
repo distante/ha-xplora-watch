@@ -13,7 +13,7 @@ no response-field key for the wrapper to read. The positional read contract itse
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -166,3 +166,78 @@ async def test_set_alarm_enabled_retries_only_on_connection_error() -> None:
 
     assert await api.setEnableAlarmTime("a1") is True
     assert api._gql_handler.setEnableAlarmTime_a.await_count == 2
+
+
+# --- Teeth for the shared control-action policy helper `_run_control_action` (ADR 0013) ---
+#
+# The nine alarm/silent-time control-action wrappers all delegate to `_run_control_action`, so the
+# fast-fail-on-any-answer / retry-only-on-raised-transport-error policy is proven once, here, against
+# the helper directly with a fake action callable. The per-wrapper `assert_awaited_once_with(...)`
+# tests above pin each wrapper's argument wiring and, by asserting a single await, that it delegates
+# unchanged.
+
+
+@pytest.mark.parametrize("returned", [False, None])
+async def test_run_control_action_fast_fails_on_any_returned_value(returned: object) -> None:
+    """Any value the action *returns* -- a ``False`` refusal or the ``None`` of an empty envelope -- is
+    the server's authoritative answer: the helper coerces it to ``bool`` and returns at once, awaiting
+    the action EXACTLY once (no retry). Retrying an action a reached watch already declined is wasted
+    traffic against a device that will keep saying no (ban hygiene, ADR 0013). ``maxRetries`` is left at
+    its default (3) here so a regression to retry-on-falsy would await up to 5 times and fail this."""
+    api = _make_api()
+    action = AsyncMock(return_value=returned)
+
+    assert await api._run_control_action(action) is False
+    action.assert_awaited_once_with()
+
+
+async def test_run_control_action_retries_only_on_connection_error() -> None:
+    """The retry loop is scoped to *raised* transport failures: a connection error re-enters the loop,
+    and once the action actually returns a value, that value is the answer returned (ADR 0013)."""
+    api = _make_api()
+    action = AsyncMock(side_effect=[XploraConnectionError(), True])
+
+    assert await api._run_control_action(action) is True
+    assert action.await_count == 2
+
+
+async def test_run_control_action_propagates_protocol_error() -> None:
+    """``XploraProtocolError`` does not subclass ``Error``, so the helper's ``except Error`` cannot
+    swallow it: a schema-drift/code bug surfaces loudly rather than being retried and mislabeled a
+    server refusal (ADR 0010, gotcha #4)."""
+    api = _make_api()
+    action = AsyncMock(side_effect=XploraProtocolError(WatchCommand.SET_ENABLE_SILENT_TIME, {"a": 1, "b": 2}))
+
+    with pytest.raises(XploraProtocolError):
+        await api._run_control_action(action)
+    action.assert_awaited_once_with()
+
+
+async def test_run_control_action_returns_false_after_exhausting_retries() -> None:
+    """When *every* attempt raises a transport error, the helper exhausts its budget and returns
+    ``False`` -- it never re-raises the transport error. The budget is ``maxRetries + 2`` attempts, so
+    this pins the terminal ``return False`` fall-through that the one-failure-then-success retry test
+    never reaches (ADR 0013)."""
+    api = _make_api()
+    action = AsyncMock(side_effect=XploraConnectionError())
+
+    assert await api._run_control_action(action) is False
+    assert action.await_count == api.maxRetries + 2  # full attempt budget (5 at defaults)
+
+
+async def test_run_control_action_does_not_back_off_after_the_final_attempt() -> None:
+    """Backoff sleeps sit BETWEEN attempts only, never after the last failed one: ``maxRetries + 1``
+    sleeps for ``maxRetries + 2`` attempts (ADR 0013 -- the ~8s-not-10s cadence that drops the original
+    loop's trailing sleep). ``retryDelay`` is 0 in tests, so the sleep is otherwise unobservable;
+    asserting its count is the only teeth for the ``attempt < maxRetries + 1`` guard -- a regression to
+    ``<=`` would restore the trailing sleep and slip past every other test."""
+    api = _make_api()
+    action = AsyncMock(side_effect=XploraConnectionError())
+
+    with patch(
+        "custom_components.xplora_watch.pyxplora_api.pyxplora_api_async.asyncio.sleep",
+        new_callable=AsyncMock,
+    ) as mock_sleep:
+        assert await api._run_control_action(action) is False
+
+    assert mock_sleep.await_count == api.maxRetries + 1  # backoff between attempts only (4 at defaults)
