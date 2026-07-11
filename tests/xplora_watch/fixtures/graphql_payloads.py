@@ -403,7 +403,7 @@ def make_fetch_chat_short_video_cover_payload() -> dict[str, Any]:
 # alternate/error branches.
 DEFAULT_OPERATION_PAYLOADS: dict[str, dict[str, Any]] = {
     "signInWithEmailOrPhone": make_login_payload(),
-    "Contacts": make_contacts_payload(),
+    "contacts": make_contacts_payload(),
     "Watches": make_watches_payload(),
     "CheckWatchByQrCode": make_check_watch_by_qrcode_payload(),
     "WatchLastLocate": make_watch_last_locate_payload(),

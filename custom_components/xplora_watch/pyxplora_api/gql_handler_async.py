@@ -193,7 +193,7 @@ class GQLHandler(HandlerGQL):
 
     async def getWatchUserContacts_a(self, wuid: str) -> dict[str, Any]:
         # Contacts from ownUser
-        data: GqlResponse = await self.runAuthorizedGqlQuery_a(gq.WATCH_Q.get("contactsQ", ""), {"uid": wuid}, "Contacts")
+        data: GqlResponse = await self.runAuthorizedGqlQuery_a(gq.WATCH_Q.get("contactsQ", ""), {"uid": wuid}, "contacts")
         errors = data.get("errors", [])
         if errors:
             self.errors.append({"function": "getWatchUserContacts", "errors": errors})

@@ -1,4 +1,8 @@
-"""ISSUE-13: assert the slimmed Chats/Alarms/SlientTimes query text no longer over-fetches.
+"""Query-document assertions for the WATCH_Q GraphQL operations. Two concerns:
+
+- ISSUE-13: the slimmed Chats/Alarms/SlientTimes query text no longer over-fetches.
+- Wire-format parity (ref:XW-012, XW-017, XW-018): operation names, fragment names, variable
+  set/order and field selection stay identical to the reference client for traffic fidelity.
 
 Pure string checks on the query documents themselves -- no network needed.
 """
@@ -151,5 +155,54 @@ def test_safe_zones_query_slims_user_fragments() -> None:
         "WatchFragment",
         "UserFragment",
         "SafeZoneGroupFragment",
-        "SafeZoneFragment",
+        "XpSafeZone",
     ]
+
+
+def test_safe_zones_query_uses_xpsafezone_fragment() -> None:
+    """The top-level SafeZone fragment is named `XpSafeZone` (as in the reference client), not the
+    library-invented `SafeZoneFragment`. Fragment names go on the wire, so this pins the spelling
+    for traffic fidelity (ref:XW-017). Op name stays `SafeZones`.
+    """
+    query = WATCH_Q["safeZonesQ"]
+    assert "query SafeZones(" in query
+    assert "...XpSafeZone" in query
+    assert "fragment XpSafeZone on SafeZone" in query
+    assert "SafeZoneFragment" not in query
+
+
+def test_chats_query_matches_reference_wire_shape() -> None:
+    """The `Chats` request mirrors the reference client on the wire (ref:XW-018): the variable
+    declaration order and the `chatsNew(...)` argument order are `uid, msgId, offset, limit, isNew`,
+    the optional `$isNew: Boolean` variable is declared, and `remainingMsgs` is selected. Argument
+    order and variable set go on the wire, so they are pinned for traffic fidelity.
+    """
+    query = WATCH_Q["chatsQ"]
+    assert "query Chats($uid: String!, $msgId: String, $offset: Int, $limit: Int, $isNew: Boolean)" in query
+    assert "chatsNew(uid: $uid, msgId: $msgId, offset: $offset, limit: $limit, isNew: $isNew)" in query
+    assert "remainingMsgs" in query
+
+
+def test_contacts_query_matches_reference_wire_shape() -> None:
+    """The `Contacts` request mirrors the reference client on the wire (ref:XW-019): lowercase
+    operation name `contacts`, the `$watchId` variable, and the `Xp*`/`XPContact`/`XPContactList`
+    fragment set (no SimpleUser/Contacts/Contactor over-fetch). Operation name, variable set and
+    fragment names go on the wire, so they are pinned for traffic fidelity.
+    """
+    query = WATCH_Q["contactsQ"]
+    assert "query contacts($uid: String, $watchId: String)" in query
+    assert "contacts(uid: $uid, watchId: $watchId)" in query
+    assert "...XPContactList" in query
+    assert "fragment XPContactList on XPContactList" in query
+    assert "fragment XPContact on XPContact" in query
+    assert "fragment XpUser on User" in query
+    assert "query Contacts(" not in query
+    for gone in (
+        "SimpleUserFragment",
+        "ContactsFragment",
+        "ContactorFragment",
+        "ContactListFragment",
+        "ContactFragment",
+        "FollowRequestFragment",
+    ):
+        assert gone not in query, f"stale fragment {gone!r} still present"
