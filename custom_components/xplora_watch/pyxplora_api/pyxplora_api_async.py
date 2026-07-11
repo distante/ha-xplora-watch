@@ -203,8 +203,11 @@ class PyXploraApi(PyXplora):
 
         The ward (the watch-wearer `User`) is the item's `user`; its id -- the id every other call
         keys a watch by (`getWatchUserIDs`, `CONF_WATCHES`) -- is `user.id`, NOT the item's own
-        device `id`. The ward's display fields (`name`/`phoneNumber`) come off the item directly,
-        falling back to the nested user; `file`/`xcoin`/steps come off the user (read by
+        device `id`. The ward's display `name` is the wearer's own `user.name` (the kid), NOT the
+        item-level `WatchListItem.name` -- which is the guardian-facing account label; sourcing the
+        name from the item would name every entity after the guardian instead of the child
+        (ref:XW-015). The `phoneNumber` is the watch's own SIM number, which is the item field
+        (falling back to the user). `file`/`xcoin`/steps come off the user (read by
         `getWatchUserIcons`/`getWatchUserXCoins` and the step helpers). `file` defaults to an
         empty-id object so the icon-URL builder never raises on a ward without a photo.
         """
@@ -212,7 +215,7 @@ class PyXploraApi(PyXplora):
         return {
             "id": user.get("id"),
             "userId": user.get("userId"),
-            "name": item.get("name") or user.get("name"),
+            "name": user.get("name") or item.get("name"),
             "phoneNumber": item.get("phoneNumber") or user.get("phoneNumber"),
             "file": user.get("file") or {"id": ""},
             "xcoin": user.get("xcoin") or 0,

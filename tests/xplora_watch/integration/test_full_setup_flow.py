@@ -8,6 +8,7 @@ piecemeal coverage already validated in coordinator/, config_flow/, services/, a
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.core import HomeAssistant
@@ -15,6 +16,8 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.xplora_watch.const import DOMAIN
+
+from ..fixtures.graphql_payloads import make_device_list_payload
 
 
 def _patch_fs_helpers():
@@ -51,6 +54,47 @@ async def test_full_setup_creates_entities_for_every_platform(
     entity_ids = {e.entity_id for e in entries}
     assert "sensor.xplora_kid_one_watch_battery_parent_name" in entity_ids
     assert all(e.entity_id.split(".", 1)[1].startswith("xplora_") for e in entries)
+
+
+async def test_full_setup_names_entities_after_the_kid_not_the_guardian(
+    hass: HomeAssistant,
+    mock_config_entry_phone: MockConfigEntry,
+    graphql_operations: dict[str, dict[str, Any]],
+    mock_graphql,
+    mock_geocoding_openstreetmap,
+    mock_entity_picture,
+) -> None:
+    """Entities are named after the watch-wearer (kid), never the guardian (ref:XW-015).
+
+    The `deviceList` `WatchListItem` carries two names: the item-level `name` is the guardian-facing
+    account label, while `user.name` is the kid. Here those are set to three mutually distinct
+    values -- guardian label "Guardian Bob", kid "Alice", and the account token "Parent Name" (from
+    the login response) -- so a slug/unique_id built from the wrong field is unambiguous. Driven
+    through full setup so the assertion covers the entire chain (coordinator -> deviceList ->
+    platform setup -> entity registry), which is exactly where the regression lived.
+    """
+    graphql_operations["deviceList"] = {"data": make_device_list_payload(guardian_label="Guardian Bob", ward_name="Alice")}
+
+    with _patch_fs_helpers():
+        await hass.config_entries.async_setup(mock_config_entry_phone.entry_id)
+        await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    entries = [e for e in registry.entities.values() if e.config_entry_id == mock_config_entry_phone.entry_id]
+    assert entries, "full setup created no entities"
+
+    # The kid ("Alice") is the leading slug segment; the account token ("Parent Name") is trailing.
+    battery = registry.async_get("sensor.xplora_alice_watch_battery_parent_name")
+    assert battery is not None, "battery sensor not registered under the kid-named slug"
+    # The unique_id core is the kid name too (its stability is what preserves history across restarts).
+    assert battery.unique_id == "alice_watch_battery_watch_id_001_user_id_001"
+
+    # The guardian label must not leak into ANY entity's id -- neither the entity_id slug nor the
+    # unique_id -- for any platform.
+    for e in entries:
+        assert "guardian_bob" not in e.entity_id, f"guardian label leaked into entity_id {e.entity_id!r}"
+        assert "guardian_bob" not in (e.unique_id or ""), f"guardian label leaked into unique_id {e.unique_id!r}"
+        assert e.entity_id.split(".", 1)[1].startswith("xplora_alice_watch_"), f"entity {e.entity_id!r} is not named after the kid"
 
 
 async def test_full_setup_migrates_a_pre_token_entity_in_place(

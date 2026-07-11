@@ -12,6 +12,9 @@ from typing import Any
 
 DEFAULT_USER_ID = "user-id-001"
 DEFAULT_ACCOUNT_NAME = "Parent Name"  # Account display name returned by getUserName()
+# The item-level ``WatchListItem.name`` (guardian-facing account label). Deliberately distinct from
+# both the ward name and the account name so a slug/unique_id built from the wrong field stands out.
+DEFAULT_GUARDIAN_LABEL = "Guardian Label"
 DEFAULT_WUID = "watch-id-001"
 DEFAULT_WARD_NAME = "Kid One"
 DEFAULT_WARD_PHONE = "+491700000001"
@@ -128,6 +131,7 @@ def make_device_list_payload(
     guardian_type: str = "FIRST",
     ward_name: str = DEFAULT_WARD_NAME,
     ward_phone: str = DEFAULT_WARD_PHONE,
+    guardian_label: str = DEFAULT_GUARDIAN_LABEL,
 ) -> dict[str, Any]:
     """Response for the ``deviceList`` query (one ``WatchListItem`` per watch, no ``uid`` arg).
 
@@ -141,12 +145,18 @@ def make_device_list_payload(
     also the account's watch-list source: ``init()`` derives ``controller.watchs`` from these
     items (the login response no longer carries ``user.children``), so ``user`` carries the
     ward's ``name``/``phoneNumber``/``file``/steps that the watch helpers read.
+
+    Faithful to the real wire: the item-level ``WatchListItem.name`` is the *guardian*-facing
+    account label (``guardian_label``), which is **different** from the ward's own ``user.name``
+    (the kid). The integration must name entities after the kid, so the two default to distinct
+    values here (``guardian_label`` is also distinct from the account name/token, so a slug built
+    from any wrong field is unambiguous).
     """
     return {
         "deviceList": [
             {
                 "id": f"device-{wuid}",
-                "name": ward_name,
+                "name": guardian_label,
                 "phoneNumber": ward_phone,
                 "battery": battery,
                 "onlineStatus": online_status,

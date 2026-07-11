@@ -63,6 +63,34 @@ def test_login_variables_include_client_id() -> None:
     assert "clientId" in handler.variables
 
 
+def test_ward_name_is_the_kid_not_the_item_guardian_label() -> None:
+    """The ward's display name is the watch-wearer's ``user.name`` (the kid), NOT the item-level
+    ``WatchListItem.name`` -- which on the wire is the guardian-facing account label. The ward name
+    flows into both the entity_id slug and the unique_id, so sourcing it from the item would name
+    every entity ``xplora_<guardian>_watch_...`` instead of ``xplora_<kid>_watch_...``.
+    """
+    item = {
+        "id": "device-1",
+        "name": "Guardian Label",  # WatchListItem.name -- the guardian-facing account label
+        "phoneNumber": "+491700000001",
+        "user": {"id": "kid-1", "name": "Kid One", "phoneNumber": "+491700000002"},
+    }
+
+    ward = PyXploraApi._ward_from_device_item(item)
+
+    assert ward["name"] == "Kid One"
+
+
+def test_ward_name_falls_back_to_item_label_when_user_name_missing() -> None:
+    """If the ward ``user`` carries no usable name, fall back to the item label rather than emit an
+    empty name (a nameless entity slug is worse than the guardian label)."""
+    item = {"id": "device-1", "name": "Guardian Label", "user": {"id": "kid-1", "name": ""}}
+
+    ward = PyXploraApi._ward_from_device_item(item)
+
+    assert ward["name"] == "Guardian Label"
+
+
 def _lean_login_payload(user_id: str = "account-1") -> dict[str, Any]:
     """A login response in the lean shape: a `user` with NO `children` block."""
     return {
