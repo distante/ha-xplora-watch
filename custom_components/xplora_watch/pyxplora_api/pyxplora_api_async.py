@@ -186,13 +186,59 @@ class PyXploraApi(PyXplora):
             user = token.get("user", None)
             if not user:
                 raise LoginError(self.error_message)
-
-            children = user.get("children", [])
-            if not self._childPhoneNumber:
-                self.watchs = children
-            else:
-                self.watchs = [watch for watch in children if watch["ward"]["phoneNumber"] in self._childPhoneNumber]
             self.user = user
+            # The login response is the lean token shape and no longer carries the account's watch
+            # list; the watch list comes from the account-wide `deviceList` query, reshaped into the
+            # `{"ward": ...}` entries the rest of the client keys a watch by (ref:XW-014). Enumerate
+            # once, only when the list isn't already known: subsequent polls (which re-run
+            # `init(forceLogin=False)`) and token refreshes reuse the cached list, so the per-poll
+            # cost stays the single status `deviceList` -- matching the pre-change behavior where the
+            # list came from the cached login response.
+            if not self.watchs:
+                await self._load_watch_list()
+
+    @staticmethod
+    def _ward_from_device_item(item: dict[str, Any]) -> dict[str, Any]:
+        """Reshape one account-wide `deviceList` item into the historical `{"ward": ...}` entry.
+
+        The ward (the watch-wearer `User`) is the item's `user`; its id -- the id every other call
+        keys a watch by (`getWatchUserIDs`, `CONF_WATCHES`) -- is `user.id`, NOT the item's own
+        device `id`. The ward's display fields (`name`/`phoneNumber`) come off the item directly,
+        falling back to the nested user; `file`/`xcoin`/steps come off the user (read by
+        `getWatchUserIcons`/`getWatchUserXCoins` and the step helpers). `file` defaults to an
+        empty-id object so the icon-URL builder never raises on a ward without a photo.
+        """
+        user = item.get("user") or {}
+        return {
+            "id": user.get("id"),
+            "userId": user.get("userId"),
+            "name": item.get("name") or user.get("name"),
+            "phoneNumber": item.get("phoneNumber") or user.get("phoneNumber"),
+            "file": user.get("file") or {"id": ""},
+            "xcoin": user.get("xcoin") or 0,
+            "currentStep": user.get("currentStep") or 0,
+            "totalStep": user.get("totalStep") or 0,
+        }
+
+    async def _load_watch_list(self) -> None:
+        """Populate `self.watchs` from the account-wide `deviceList` query.
+
+        Replaces the retired derivation from the login response's `user.children` (the login is now
+        the lean token shape and no longer carries it). Each `deviceList` item is one watch; only
+        items exposing a ward id are kept, and the optional `_childPhoneNumber` filter still narrows
+        the list to the configured ward phone numbers.
+        """
+        device_data = await self._gql_handler.get_device_list_a()
+        items = device_data.get("deviceList") or []
+        watchs: list[dict[str, Any]] = []
+        for item in items:
+            ward = self._ward_from_device_item(item)
+            if not ward.get("id"):
+                continue
+            if self._childPhoneNumber and str(ward.get("phoneNumber") or "") not in self._childPhoneNumber:
+                continue
+            watchs.append({"ward": ward})
+        self.watchs = watchs
 
     async def setDevices(self, ids: str | list[str] | None = None, functions: frozenset[WatchFunction] = ALL_WATCH_FUNCTIONS) -> list[str]:
         if self.inter_error is not None:
@@ -1138,9 +1184,11 @@ class PyXploraApi(PyXplora):
 
         The Xplora token is valid for ~35 days but is held only in memory, so a Home Assistant
         restart otherwise spends a fresh `signInWithEmailOrPhone` every time. The `signIn` blob
-        (`_issueToken`) is the whole restorable session: it carries the access/refresh tokens, the
-        expiry, AND `user.children` (the watch list `init()` derives `self.watchs` from) -- so
-        persisting it lets a restart skip the login entirely (see `restore_session`).
+        (`_issueToken`) is the restorable session: it carries the access/refresh tokens, the
+        expiry, and the (lean) account `user` -- so persisting it lets a restart skip the login
+        entirely (see `restore_session`). The watch list is not part of the blob; a restored
+        session re-derives it from `deviceList` on the next `init()` (a call every poll makes
+        anyway), so only the ban-driving login is avoided.
 
         Returns `{}` when there is no live session to persist (so callers can skip writing).
         """
@@ -1151,11 +1199,11 @@ class PyXploraApi(PyXplora):
     def restore_session(self, blob: dict[str, Any]) -> bool:
         """Restore a session previously produced by `dump_session`, mirroring `login_a`'s state.
 
-        Sets exactly the fields a successful login would, all derived from the stored `signIn`
+        Sets exactly the token fields a successful login would, all derived from the stored `signIn`
         blob (so there is no chance of the parts drifting out of sync). After this, a subsequent
         `init(forceLogin=False)` finds `_isConnected()` true and -- if `_hasTokenExpired()` is
-        false -- performs NO network call, then populates `self.watchs`/`self.user` from the
-        restored token's `user.children`.
+        false -- skips the login, sets `self.user` from the restored token, and derives
+        `self.watchs` from a single `deviceList` call (the login, the ban-driver, is still avoided).
 
         Returns `True` if a usable session was restored, `False` for a missing/corrupt/partial
         blob (the caller then falls through to a normal login -- never crashes on bad stored data).

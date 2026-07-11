@@ -115,7 +115,7 @@ async def test_data_loop_non_admin_no_response_is_still_ok(coordinator: XploraDa
     `ok` -- otherwise these accounts show the "watch didn't respond" warning on every single poll
     while their chat/online/unread-count data is perfectly correct.
     """
-    graphql_operations["AskWatchLocate"] = {"data": make_ask_watch_locate_payload(success=False)}
+    graphql_operations["askWatchLocate"] = {"data": make_ask_watch_locate_payload(success=False)}
 
     await coordinator.controller.setDevices([DEFAULT_WUID])
     coordinator.is_admin[DEFAULT_WUID] = False  # secondary guardian / contact
@@ -130,7 +130,7 @@ async def test_data_loop_admin_no_response_records_no_response(coordinator: Xplo
     Preserves the warning that matters for location tracking: for `guardianType == "FIRST"` the
     `askWatchLocate` verdict is the real "could not update the location" signal.
     """
-    graphql_operations["AskWatchLocate"] = {"data": make_ask_watch_locate_payload(success=False)}
+    graphql_operations["askWatchLocate"] = {"data": make_ask_watch_locate_payload(success=False)}
 
     await coordinator.controller.setDevices([DEFAULT_WUID])
     coordinator.is_admin[DEFAULT_WUID] = True  # primary guardian

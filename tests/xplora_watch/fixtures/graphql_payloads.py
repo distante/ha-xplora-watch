@@ -20,15 +20,15 @@ DEFAULT_QR_CODE = "XPLORA=ABCDEF123456"
 
 def make_login_payload(
     user_id: str = DEFAULT_USER_ID,
-    wuid: str = DEFAULT_WUID,
-    ward_name: str = DEFAULT_WARD_NAME,
-    ward_phone: str = DEFAULT_WARD_PHONE,
     user_name: str = DEFAULT_ACCOUNT_NAME,
 ) -> dict[str, Any]:
     """Response for the ``signInWithEmailOrPhone`` mutation (login).
 
-    ``user_name`` is the Account display name returned by ``getUserName()``; pass ``""`` to
-    exercise the empty-display-name path (e.g. the account-token fallback to the account id).
+    The lean shape: the ``user`` is the logged-in *account* (guardian) and carries no
+    ``children`` -- the watch list is sourced from ``deviceList`` (see ``make_device_list_payload``
+    and ``PyXploraApi._load_watch_list``). ``user_name`` is the Account display name returned by
+    ``getUserName()``; pass ``""`` to exercise the empty-display-name path (e.g. the account-token
+    fallback to the account id).
     """
     return {
         "signInWithEmailOrPhone": {
@@ -38,20 +38,8 @@ def make_login_payload(
             "user": {
                 "id": user_id,
                 "name": user_name,
-                "children": [
-                    {
-                        "id": "child-rel-1",
-                        "ward": {
-                            "id": wuid,
-                            "name": ward_name,
-                            "phoneNumber": ward_phone,
-                            "file": {"id": "file-1"},
-                            "xcoin": 10,
-                            "currentStep": 1234,
-                            "totalStep": 56789,
-                        },
-                    }
-                ],
+                "emailConsent": 1,
+                "isSSO": False,
             },
             "w360": {"token": "w360-token", "secret": "w360-secret"},
         }
@@ -138,6 +126,8 @@ def make_device_list_payload(
     today_steps: int = 1234,
     unread_chat_message_count: int = 0,
     guardian_type: str = "FIRST",
+    ward_name: str = DEFAULT_WARD_NAME,
+    ward_phone: str = DEFAULT_WARD_PHONE,
 ) -> dict[str, Any]:
     """Response for the ``deviceList`` query (one ``WatchListItem`` per watch, no ``uid`` arg).
 
@@ -146,14 +136,18 @@ def make_device_list_payload(
     the coordinator's per-watch status fan-out collapsed into this single account-wide call.
 
     A ``WatchListItem`` is keyed by its own *device* id (here a distinct ``device-<wuid>``),
-    and carries the *ward* id the integration looks watches up by only under ``user.id`` --
-    mirroring real Xplora data. This guards the regression where indexing the list by the
-    device id alone left every watch's battery/charging "unknown" (see ``getDeviceList``).
+    and carries the *ward* (the watch-wearer ``User``) under ``user`` with the ward id the
+    integration looks watches up by under ``user.id`` -- mirroring real Xplora data. This is
+    also the account's watch-list source: ``init()`` derives ``controller.watchs`` from these
+    items (the login response no longer carries ``user.children``), so ``user`` carries the
+    ward's ``name``/``phoneNumber``/``file``/steps that the watch helpers read.
     """
     return {
         "deviceList": [
             {
                 "id": f"device-{wuid}",
+                "name": ward_name,
+                "phoneNumber": ward_phone,
                 "battery": battery,
                 "onlineStatus": online_status,
                 "unreadChatMessageCount": unread_chat_message_count,
@@ -166,7 +160,16 @@ def make_device_list_payload(
                 # this (replacing the per-watch `Contacts`/`isAdmin` call).
                 "guardianType": guardian_type,
                 "stepsInfo": {"dailyStepsGoal": 10000, "todaysSteps": today_steps, "totalSteps": 56789},
-                "user": {"id": wuid, "xcoin": 10},
+                "user": {
+                    "id": wuid,
+                    "userId": f"u-{wuid}",
+                    "name": ward_name,
+                    "phoneNumber": ward_phone,
+                    "file": {"id": "file-1"},
+                    "xcoin": 10,
+                    "currentStep": 1234,
+                    "totalStep": 56789,
+                },
                 "location": {
                     "tm": 1700000000,
                     "lat": lat,
@@ -227,7 +230,7 @@ def make_track_watch_payload(interval: int = 10) -> dict[str, Any]:
 
 
 def make_ask_watch_locate_payload(success: bool = True) -> dict[str, Any]:
-    """Response for the ``AskWatchLocate`` query."""
+    """Response for the ``askWatchLocate`` query."""
     return {"askWatchLocate": success}
 
 
@@ -347,7 +350,8 @@ def make_add_alarm_payload(alarm_id: str = "alarm-new-1") -> dict[str, Any]:
 
 
 def make_set_enable_silent_time_payload(success: bool = True) -> dict[str, Any]:
-    """Response for the ``SetEnableSilentTime`` mutation (selects the field ``setEnableSilentTime``)."""
+    """Response for the ``SetEnableSlientTime`` mutation (op name misspelled on the wire; selects
+    the field ``setEnableSilentTime``)."""
     return {"setEnableSilentTime": success}
 
 
@@ -396,7 +400,7 @@ DEFAULT_OPERATION_PAYLOADS: dict[str, dict[str, Any]] = {
     "LocHistory": make_loc_history_payload(),
     "deviceList": make_device_list_payload(),
     "TrackWatch": make_track_watch_payload(),
-    "AskWatchLocate": make_ask_watch_locate_payload(),
+    "askWatchLocate": make_ask_watch_locate_payload(),
     "Alarms": make_alarms_payload(),
     "SlientTimes": make_silent_times_payload(),
     "SafeZones": make_safe_zones_payload(),
@@ -412,7 +416,7 @@ DEFAULT_OPERATION_PAYLOADS: dict[str, dict[str, Any]] = {
     "ModifyAlarm": make_modify_alarm_payload(),
     "RemoveAlarm": make_remove_alarm_payload(),
     "AddAlarm": make_add_alarm_payload(),
-    "SetEnableSilentTime": make_set_enable_silent_time_payload(),
+    "SetEnableSlientTime": make_set_enable_silent_time_payload(),
     "ModifySilentTime": make_modify_silent_time_payload(),
     "RemoveSilentTime": make_remove_silent_time_payload(),
     "AddSilentTime": make_add_silent_time_payload(),

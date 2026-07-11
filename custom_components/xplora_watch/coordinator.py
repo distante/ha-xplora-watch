@@ -380,6 +380,16 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             await self.set_controller(session)
             await self.controller.init(forceLogin=False)
+        except AuthError:
+            # `init()`'s one authenticated call is the post-login watch-list fetch (`deviceList`),
+            # now authenticated because the lean login no longer returns the watch list (ADR 0011).
+            # Reaching here means a *restored* token our expiry estimate still trusted was rejected
+            # (E000004) on that fetch. The single-flight RefreshToken gate lives in the per-poll
+            # `_with_recovery`, not here at setup, so force one clean re-login and retry -- a fresh
+            # token then enumerates the watch list. Preserves the pre-change behavior where a stale
+            # restored token recovered instead of failing setup.
+            self._log.debug("Restored token rejected on setup watch-list fetch (E000004); forcing re-login")
+            await self.controller.init(forceLogin=True)
         except RateLimitError, XploraConnectionError:
             # Transient (429 / connection): the controller object is fine, it just couldn't
             # reach the server this poll. Keep it (and any cached token) so the next poll

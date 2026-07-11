@@ -175,7 +175,7 @@ class GQLHandler(HandlerGQL):
         return data.get("data", {})
 
     async def askWatchLocate_a(self, wuid: str) -> dict[str, Any]:
-        data: GqlResponse = await self.runAuthorizedGqlQuery_a(gq.WATCH_Q.get("askLocateQ", ""), {"uid": wuid}, "AskWatchLocate")
+        data: GqlResponse = await self.runAuthorizedGqlQuery_a(gq.WATCH_Q.get("askLocateQ", ""), {"uid": wuid}, "askWatchLocate")
         errors = data.get("errors", [])
         if errors:
             self.errors.append({"function": "askWatchLocate", "errors": errors})

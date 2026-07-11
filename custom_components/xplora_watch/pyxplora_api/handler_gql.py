@@ -92,6 +92,10 @@ class HandlerGQL:
             "timeZone": self.timeZone,
             "emailAddress": self.email,
             "client": ClientType.APP.value,
+            # `signInWithEmailOrPhone` declares a `$clientId: String`; sent (null here -- this
+            # client registers no push/device id) so the login request carries the same variable
+            # set as the reference client (ref:XW-014).
+            "clientId": None,
         }
         self.signup = signup
 

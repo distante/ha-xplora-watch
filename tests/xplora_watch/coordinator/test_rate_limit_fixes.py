@@ -27,7 +27,8 @@ from custom_components.xplora_watch.pyxplora_api.const import (
     ENDPOINT,
     GqlOperation,
 )
-from custom_components.xplora_watch.pyxplora_api.exception_classes import LoginError, RateLimitError
+from custom_components.xplora_watch.pyxplora_api.exception_classes import AuthError, LoginError, RateLimitError
+from custom_components.xplora_watch.pyxplora_api.pyxplora_api_async import PyXploraApi
 
 from ..conftest import _make_graphql_callback
 from ..fixtures.graphql_payloads import DEFAULT_OPERATION_PAYLOADS, DEFAULT_USER_ID, DEFAULT_WUID
@@ -581,7 +582,7 @@ async def test_one_poll_issues_exactly_one_device_list_call(hass: HomeAssistant,
             counts["deviceList"] += 1
         elif op in ("WatchState", "UserSteps", "UnReadChatMsgCount", "TrackWatch"):
             counts["old_fan_out"] += 1
-        elif op == "AskWatchLocate":
+        elif op == "askWatchLocate":
             counts["ask_locate"] += 1
         elif op == "WatchLastLocate":
             counts["last_locate"] += 1
@@ -591,6 +592,10 @@ async def test_one_poll_issues_exactly_one_device_list_call(hass: HomeAssistant,
         mocked.post(ENDPOINT, callback=_callback, repeat=True)
         _mock_geocoding(mocked)
         coord = await _init_coordinator(hass, mock_config_entry_phone)
+        # Setup enumerates the account's watch list with one `deviceList` call (the lean login
+        # response no longer carries it); zero the counters so the assertions measure only the poll.
+        for key in counts:
+            counts[key] = 0
         await coord.async_update_xplora_data()
 
     # Status still consolidated into one deviceList; the retired per-watch fan-out stays gone.
@@ -614,7 +619,10 @@ async def test_device_list_e000004_triggers_auth_recovery(hass: HomeAssistant, m
         op = body.get("operationName")
         if op == "deviceList":
             counts["deviceList"] += 1
-            if counts["deviceList"] == 1:
+            # #1 is the setup-time watch-list enumeration; fail the *poll's* status deviceList (#2)
+            # so the E000004 lands on the recovery-wrapped fetch path (`_with_recovery`) -- the
+            # setup-time enumeration is deliberately not wrapped (see `coordinator.init`).
+            if counts["deviceList"] == 2:
                 return CallbackResult(status=200, payload={"errors": [{"code": "E000004"}]})
         elif op == "RefreshToken":
             counts["refresh"] += 1
@@ -641,6 +649,37 @@ async def test_device_list_e000004_triggers_auth_recovery(hass: HomeAssistant, m
 
     assert counts["refresh"] == 1
     assert DEFAULT_WUID in result
+
+
+async def test_setup_recovers_when_enumeration_hits_auth_error(
+    hass: HomeAssistant, mock_config_entry_phone: MockConfigEntry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`init()` now makes an authenticated call (the watch-list `deviceList`), so it can raise
+    `AuthError` -- e.g. a restored token our expiry estimate still trusted, rejected on that fetch.
+    That path is outside the per-poll `_with_recovery` gate, so `coordinator.init` must force one
+    re-login and retry rather than let the `AuthError` fail setup untyped.
+    """
+    calls = {"n": 0}
+    real_init = PyXploraApi.init
+
+    async def flaky_init(self: PyXploraApi, forceLogin: bool = False, **kwargs: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # First attempt (forceLogin=False): simulate the restored token being rejected on the
+            # post-login enumeration fetch.
+            raise AuthError()
+        await real_init(self, forceLogin=forceLogin, **kwargs)
+
+    monkeypatch.setattr(PyXploraApi, "init", flaky_init)
+
+    with aioresponses() as mocked:
+        mocked.post(ENDPOINT, callback=_make_graphql_callback(_operations()), repeat=True)
+        _mock_geocoding(mocked)
+        coord = await _init_coordinator(hass, mock_config_entry_phone)
+
+    # Handler forced exactly one re-login retry, and setup completed with the watch enumerated.
+    assert calls["n"] == 2
+    assert coord.controller.getWatchUserIDs() == [DEFAULT_WUID]
 
 
 # --- Redundant per-watch calls removed: model info now comes from deviceList ----------------

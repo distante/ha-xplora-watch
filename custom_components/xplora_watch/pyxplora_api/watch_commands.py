@@ -20,6 +20,14 @@ from __future__ import annotations
 
 from enum import Enum
 
+# Control-action operation names whose wire spelling the field-derived PascalCase can't reproduce
+# -- kept here as verbatim overrides so requests stay byte-identical for traffic fidelity
+# (ref:XW-013; ADR 0010, ADR 0011). A GraphQL operation name is client-chosen and, for a
+# single-operation document, the server dispatches on the selected field not the label, so an
+# override has no functional effect; it is preserved purely for traffic fidelity. Keyed by the
+# server field.
+_OPERATION_NAME_OVERRIDES: dict[str, str] = {"setEnableSilentTime": "SetEnableSlientTime"}
+
 
 class WatchCommand(Enum):
     """A watch control-action mutation, identified by its server GraphQL field.
@@ -83,11 +91,15 @@ class WatchCommand(Enum):
 
     @property
     def operation_name(self) -> str:
-        """The GraphQL operation name, derived from the field (first letter upper-cased).
+        """The GraphQL operation name: the field with its first letter upper-cased, unless a
+        non-derivable wire label is defined for it (see ``_OPERATION_NAME_OVERRIDES``).
 
-        A pure function of the field, so it can never carry a typo the field does not, and the
-        transport mock / real server can resolve it (a named operation)."""
-        return self.field[0].upper() + self.field[1:]
+        For all but the overridden ops this is a pure function of the field, so it can't carry a
+        typo the field does not; the one override reproduces a misspelling kept verbatim for wire
+        fidelity (ref:XW-013). Either way it is a valid named operation the transport mock / real
+        server can resolve."""
+        override = _OPERATION_NAME_OVERRIDES.get(self.field)
+        return override if override is not None else self.field[0].upper() + self.field[1:]
 
     @property
     def query(self) -> str:

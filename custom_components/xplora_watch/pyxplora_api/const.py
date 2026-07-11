@@ -48,7 +48,7 @@ class GqlOperation(StrEnum):
     ALARMS = "Alarms"
     SAFE_ZONES = "SafeZones"
     SILENT_TIMES = "SlientTimes"  # spelling intentional -- keep verbatim (ref:XW-011)
-    ASK_WATCH_LOCATE = "AskWatchLocate"
+    ASK_WATCH_LOCATE = "askWatchLocate"  # lowercase-initial op name, kept verbatim (ref:XW-012; ADR 0011)
     WATCH_LAST_LOCATE = "WatchLastLocate"
     CHATS = "Chats"
     CONTACTS = "Contacts"

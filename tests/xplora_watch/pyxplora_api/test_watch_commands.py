@@ -83,16 +83,23 @@ def test_parser_fails_loud_on_unparsed_variable_type() -> None:
         parse_command_query("mutation X($a: ) {\n  x(a: $a)\n}")
 
 
+# Exactly one control-action operation name is misspelled on the wire; the request layer sends it
+# verbatim for traffic fidelity (ref:XW-013). Every other command's op name is the plain
+# field-derived PascalCase.
+_OPERATION_NAME_OVERRIDES = {WatchCommand.SET_ENABLE_SILENT_TIME: "SetEnableSlientTime"}
+
+
 @pytest.mark.parametrize("command", list(WatchCommand))
-def test_operation_name_is_typo_free(command: WatchCommand) -> None:
-    """The operation name is derived from the field, so the historical ``Slient`` typo cannot
-    recur, and it is a valid capitalised identifier the transport mock / server can resolve."""
-    assert "Slient" not in command.operation_name
+def test_operation_name_matches_wire_label(command: WatchCommand) -> None:
+    """The operation name is the field-derived PascalCase for every command EXCEPT the one whose
+    wire label is misspelled (``setEnableSilentTime`` -> ``SetEnableSlientTime``), kept verbatim for
+    fidelity (ref:XW-013). A command not in the override map still may not carry ``Slient`` -- an
+    *accidental* typo is still caught; only the one documented label is exempt."""
+    expected = _OPERATION_NAME_OVERRIDES.get(command, command.field[0].upper() + command.field[1:])
+    assert command.operation_name == expected
     assert command.operation_name[0].isupper()
-    # Load-bearing: pins the exact derivation. A regression to e.g. `.capitalize()` (which lowercases
-    # the tail: shutDown -> Shutdown) or `.upper()` would fail here; the old `startswith(field[:4])`
-    # check could never fail since a string always starts with its own prefix.
-    assert command.operation_name == command.field[0].upper() + command.field[1:]
+    if command not in _OPERATION_NAME_OVERRIDES:
+        assert "Slient" not in command.operation_name
 
 
 # --------------------------------------------------------------------------- read contract
