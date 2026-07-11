@@ -146,6 +146,13 @@ class GQLHandler(HandlerGQL):
         drift or a code bug), raised as `XploraProtocolError` rather than silently defaulted.
         """
         resp = await self.runAuthorizedGqlQuery_a(command.query, variables, command.operation_name)
+        # Raw, unparsed control-mutation response -- the authoritative record of what the server
+        # actually said before the single-value read below collapses it to a bool/object. A bare
+        # `false` (watch reached, declined) and a non-`E000004` `errors` payload both reduce to the
+        # same `watch_offline` surfacing a layer up, so this is the only place an operator can tell
+        # which happened. Routed through the same opt-in `_RAW_LOGGER` channel as `chatsNew` (off by
+        # default: the envelope can carry personal data). See `_RAW_LOGGER` for how to enable it.
+        _RAW_LOGGER.debug("raw %s response: %s", command.operation_name, resp)
         data = resp.get("data") or {}
         if not data:
             return None

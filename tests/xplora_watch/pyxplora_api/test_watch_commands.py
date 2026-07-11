@@ -12,6 +12,8 @@ authenticated chokepoint (``runAuthorizedGqlQuery_a``).
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from aioresponses import aioresponses
 
@@ -136,6 +138,34 @@ async def test_run_command_empty_data_is_non_success(envelope: dict) -> None:
 
     handler.runAuthorizedGqlQuery_a = _fake  # type: ignore[method-assign]
     assert await handler.run_command(WatchCommand.REBOOT, {"uid": "w1"}) is None
+
+
+_RAW_LOGGER_NAME = "custom_components.xplora_watch.pyxplora_api.raw"
+
+
+async def test_run_command_logs_raw_response_on_opt_in_channel(caplog: pytest.LogCaptureFixture) -> None:
+    """The full, unparsed response envelope is emitted on the opt-in raw channel so an operator can
+    see exactly what the server said for a control mutation.
+
+    A bare ``{"modifyAlarm": false}`` (watch reached, declined) and an ``errors`` payload both
+    collapse to the same ``watch_offline`` surfacing, so without this an operator cannot tell which
+    happened. Gated behind the dedicated ``...pyxplora_api.raw`` logger (large / personal-data
+    payloads), exactly like the ``chatsNew`` raw dump."""
+    handler = _bare_handler()
+    envelope = {"data": {"modifyAlarm": False}}
+
+    async def _fake(query, variables=None, operation_name=None):  # noqa: ANN001, ANN202
+        return envelope
+
+    handler.runAuthorizedGqlQuery_a = _fake  # type: ignore[method-assign]
+    with caplog.at_level(logging.DEBUG, logger=_RAW_LOGGER_NAME):
+        await handler.run_command(WatchCommand.MODIFY_ALARM, {"alarmId": "a1", "status": "ENABLE"})
+
+    raw = [r for r in caplog.records if r.name == _RAW_LOGGER_NAME]
+    assert raw, "expected the raw response envelope to be logged on the opt-in channel"
+    message = raw[-1].getMessage()
+    assert "ModifyAlarm" in message, "raw log should name the operation"
+    assert "modifyAlarm" in message and "False" in message, "raw log should carry the verbatim envelope"
 
 
 async def test_run_command_multi_key_raises_protocol_error() -> None:

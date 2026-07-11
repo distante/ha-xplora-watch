@@ -30,6 +30,10 @@ logger:
   default: info
   logs:
     custom_components.xplora_watch: debug
+    # Raw, unparsed GraphQL response envelopes (control mutations + chatsNew). The parent line
+    # above already enables this by inheritance, but keep it explicit so the raw dumps survive if
+    # the parent is ever dialed back to info. Off by default in production (personal data).
+    custom_components.xplora_watch.pyxplora_api.raw: debug
     # libturbojpeg isn't installed in this devcontainer; it only speeds up
     # camera snapshots, an HA core feature xplora_watch doesn't use.
     homeassistant.components.camera.img_util: critical
