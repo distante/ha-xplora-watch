@@ -7,7 +7,7 @@ That makes the email a safe, self-sufficient switch: a demo entry is network-fre
 environment variable, no real login attempt on startup), while a real entry -- whose email never
 matches -- is never swapped to the demo controller.
 
-Five sentinels seed five distinct accounts so the multi-account service fan-out (ADR 0004) can be
+Six sentinels seed six distinct accounts so the multi-account service fan-out (ADR 0004) can be
 exercised in a live Home Assistant with no servers:
 
 - `demo@xplora-watch.invalid` -- primary **Guardian** of "Patrick".
@@ -16,13 +16,20 @@ exercised in a live Home Assistant with no servers:
   control action targeting all of them skips it and the partial-success notification can be seen.
 - `demo-offline@xplora-watch.invalid` -- a **Guardian** of "Max" whose watch is **offline**, so a
   control action is *refused* (the `watch_offline` surfacing) rather than looking like it worked.
+  An offline watch also reports no live position (the coordinator drops its coordinates), so its map
+  shows "Location unavailable" -- the stale fix time still shows in the overview header chip.
 - `demo-error@xplora-watch.invalid` -- a **Guardian** of "Nora" whose watch loads normally but whose
   *forced* re-fix **raises**: the first locate (the setup refresh) succeeds so the entry loads with a
   real position, then every later locate errors. That is what the map card's Reload button hits --
   the browser e2e suite asserts the button recovers instead of staying stuck spinning (ADR 0008).
   Distinct from Offline, which returns a no-response (keeps the last fix), not an error.
+- `demo-stale@xplora-watch.invalid` -- a **Guardian** of "Lena" whose watch is **online** (so it
+  keeps its pin on the map) but did **not respond** to the locate request, so it keeps an older fix:
+  the map draws a real pin under a "Watch didn't respond - location from N ago" banner and the header
+  chip shows the fix age, not the poll time. This is the reachable-but-stale case ADR 0007 exists for
+  -- distinct from Offline (no pin) and from Error (raises); here the locate simply returns `False`.
 
-Put all five watch devices in one Home Assistant area, then a single service call targeting that
+Put all six watch devices in one Home Assistant area, then a single service call targeting that
 area fans out across every account: the online Guardians act, the Contact is skipped, and the
 offline watch is reported as offline.
 
@@ -48,6 +55,7 @@ from .const import (
     DEMO_ERROR_ACCOUNT_EMAIL,
     DEMO_OFFLINE_ACCOUNT_EMAIL,
     DEMO_SECOND_PARENT_ACCOUNT_EMAIL,
+    DEMO_STALE_ACCOUNT_EMAIL,
 )
 from .demo_voice import DEMO_VOICE_AMR_B64
 from .pyxplora_api.const import ALL_WATCH_FUNCTIONS, WatchFunction
@@ -87,6 +95,15 @@ DEMO_CONTACT_WUID: Final = "00000000-0000-0000-0000-000000000003"
 DEMO_OFFLINE_WUID: Final = "00000000-0000-0000-0000-000000000004"
 # --- Error demo account ("Nora", Guardian whose forced re-fix raises after the first success) -------
 DEMO_ERROR_WUID: Final = "00000000-0000-0000-0000-000000000005"
+# --- Stale demo account ("Lena", online Guardian whose watch did not respond to the locate) ---------
+DEMO_STALE_WUID: Final = "00000000-0000-0000-0000-000000000006"
+
+# How old the kept fix is for a watch that did not respond to the locate request. A no-response watch
+# keeps its LAST fix (ADR 0007) -- captured before it stopped responding -- so the demo shows
+# "location from N ago" instead of a fabricated "just now". Frozen at construction (see
+# `_frozen_fix_tm`), so the shown age grows with wall-clock as the session runs; ~27 min reads as
+# plainly stale, not borderline. Applies whether the watch is offline (no pin) or online (stale pin).
+_DEMO_STALE_FIX_AGE_SECONDS: Final = 27 * 60
 
 
 @dataclass(frozen=True)
@@ -99,6 +116,14 @@ class _DemoProfile:
     path; the others keep text-only chats so a shared media cache can't collide across accounts.
     ``online`` False models a switched-off/offline watch: the deviceList reports it offline and every
     control action is *refused* (returns ``False``), so a control service surfaces ``watch_offline``.
+    It also gates the map pin -- the coordinator drops an offline watch's coordinates, so its map
+    reads "Location unavailable" (the stale fix time still shows in the header chip).
+    ``responds`` False models a watch that did **not** accept the locate request this cycle
+    (``askWatchLocate`` returns ``False``): the coordinator records a ``no_response`` and keeps the
+    last known fix, so the fix time is stale rather than "just now" (ADR 0007). Independent of
+    ``online``: an ``online=True, responds=False`` watch keeps its **pin** (still online) but under a
+    "Watch didn't respond - location from N ago" banner -- the reachable-but-stale case. An offline
+    watch never responds regardless, so ``online=False`` implies no fresh fix too.
     ``safe_zone_label`` non-empty models a watch currently INSIDE a safezone of that name: every
     location payload reports ``isInSafeZone``/``safeZoneLabel`` accordingly and a matching safezone
     definition is served, so the `current_safezone` sensor, the safezone card tile and the per-zone
@@ -127,6 +152,7 @@ class _DemoProfile:
     xcoin: int
     has_voice: bool
     online: bool = True
+    responds: bool = True
     safe_zone_label: str = ""
     refresh_raises: bool = False
 
@@ -207,6 +233,8 @@ _PROFILES: Final[dict[str, _DemoProfile]] = {
         xcoin=15,
         has_voice=False,
         online=False,
+        # An offline watch cannot accept a locate request either -> no-response, keeps the last fix.
+        responds=False,
     ),
     DEMO_ERROR_ACCOUNT_EMAIL: _DemoProfile(
         user_id="demo_error_account",
@@ -227,6 +255,29 @@ _PROFILES: Final[dict[str, _DemoProfile]] = {
         xcoin=45,
         has_voice=False,
         refresh_raises=True,
+    ),
+    DEMO_STALE_ACCOUNT_EMAIL: _DemoProfile(
+        user_id="demo_stale_account",
+        user_name="Demo Stale",
+        wuid=DEMO_STALE_WUID,
+        child_name="Lena",
+        # A Guardian whose watch is online (keeps its map pin) but did not respond to the locate.
+        guardian_type="FIRST",
+        # Tripsdrill, Cleebronn, Baden-Württemberg.
+        lat=49.0397,
+        lng=9.0803,
+        poi="Erlebnispark Tripsdrill",
+        city="Cleebronn",
+        province="Baden-Württemberg",
+        country="Deutschland",
+        battery=83,
+        steps=4210,
+        xcoin=60,
+        has_voice=False,
+        # Online (so the pin is retained) but the locate request was not accepted this cycle ->
+        # no-response, keeps an older fix. The map draws a real pin under "Watch didn't respond -
+        # location from N ago" -- the reachable-but-stale case ADR 0007 exists for.
+        responds=False,
     ),
 }
 
@@ -269,6 +320,10 @@ class DemoPyXploraApi(PyXploraApi):
         # once-per-cycle entry point (`coordinator._refresh_watch_fix` calls it once, then reads
         # `loadWatchLocation` possibly several times), so the cycle count is tracked there.
         self._located_once = False
+        # The frozen "last known fix" time a no-response watch keeps reporting: captured before the
+        # watch stopped responding so its shown age grows over the session (ADR 0007). A watch that
+        # responds to the locate ignores this and re-fixes to `now` -- see `_fix_tm`.
+        self._frozen_fix_tm = int(time.time()) - _DEMO_STALE_FIX_AGE_SECONDS
         super().__init__(**kwargs)
 
     async def init(self, *args: Any, **kwargs: Any) -> None:
@@ -330,7 +385,8 @@ class DemoPyXploraApi(PyXploraApi):
                     "rad": 15,
                     "step": profile.steps,
                     "distance": -1,
-                    "tm": int(time.time()),
+                    # Fresh for a reachable watch, frozen-stale for an offline one (ADR 0007).
+                    "tm": self._fix_tm(),
                 },
                 "stepsInfo": {"todaysSteps": profile.steps},
             }
@@ -412,11 +468,26 @@ class DemoPyXploraApi(PyXploraApi):
         """No avatar for the demo child, as requested."""
         return ""
 
-    async def askWatchLocate(self, wuid: str) -> bool:
-        """The demo watch "responds" to a locate request.
+    def _fix_tm(self) -> int:
+        """The epoch-seconds `tm` of the fix this watch reports.
 
-        The `refresh_raises` profile lets the FIRST cycle through (so the entry loads with a real
-        position and the map draws), then raises on every *forced* re-fix after it. This is the
+        Poll outcome and fix freshness are independent (ADR 0007). A watch that accepts the locate
+        (`responds`) re-fixes to `now` on every read; a no-response watch keeps its last known fix,
+        frozen at `_frozen_fix_tm` (captured before it stopped responding) so the shown "location
+        from N ago" age grows over the session instead of fabricating a fresh "just now". This is
+        independent of `online`: an online-but-unresponsive watch keeps its pin *and* reads stale.
+        """
+        return int(time.time()) if self._profile.responds else self._frozen_fix_tm
+
+    async def askWatchLocate(self, wuid: str) -> bool:
+        """Whether the watch accepted the locate request (accepted -> a fresh fix follows).
+
+        A watch that does not respond (`responds=False` -- an offline watch, or an online watch that
+        did not accept the locate this cycle) returns `False`: the coordinator records a `no_response`
+        and keeps the last known fix (ADR 0007), rather than pretending it just took a fresh position.
+
+        The `refresh_raises` profile responds, so its FIRST cycle returns `True` (the entry loads with
+        a real position and the map draws), then every *forced* re-fix after it raises. This is the
         map card's Reload path (it presses the watch's Update button), so the exception propagates
         through the coordinator and the frontend `callService` rejects -- driving the card's
         failed-press recovery. A connection error (not auth/rate limit) keeps it a plain, retryable
@@ -426,14 +497,18 @@ class DemoPyXploraApi(PyXploraApi):
         if self._profile.refresh_raises and self._located_once:
             raise XploraConnectionError("demo error persona: the watch did not accept the locate request")
         self._located_once = True
-        return True
+        return self._profile.responds
 
     async def loadWatchLocation(self, wuid: str = "", with_ask: bool = True) -> dict[str, Any]:
-        """Always-fresh fix at this account's location, mirroring `PyXploraApi.loadWatchLocation`'s shape."""
+        """A fix at this account's location, mirroring `PyXploraApi.loadWatchLocation`'s shape.
+
+        Fresh ("just now") for a reachable watch; the frozen last-known fix for an offline one, whose
+        `tm` sits minutes in the past and does not advance -- the no-response/stale case (ADR 0007).
+        """
         profile = self._profile
-        now = int(time.time())
+        fix_tm = self._fix_tm()
         watch_last_location = {
-            "tm": now,
+            "tm": fix_tm,
             "lat": profile.lat,
             "lng": profile.lng,
             "rad": 15,
@@ -448,7 +523,7 @@ class DemoPyXploraApi(PyXploraApi):
             "isCharging": False,
         }
         return {
-            "tm": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+            "tm": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(fix_tm)),
             "lat": profile.lat,
             "lng": profile.lng,
             "rad": 15,

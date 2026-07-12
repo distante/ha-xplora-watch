@@ -1,16 +1,19 @@
-"""The five network-free demo accounts (see ``demo.py``).
+"""The six network-free demo accounts (see ``demo.py``).
 
 The demo sentinels let the whole integration -- including the multi-account service fan-out
 (ADR 0004) -- be exercised in a live Home Assistant with no Xplora servers: a primary Guardian, a
-second Guardian of a different child, a Contact, a Guardian whose watch is offline, and a Guardian
-whose forced re-fix raises (the browser e2e's Reload-failure persona). These assert each sentinel
-resolves to the ``DemoPyXploraApi`` and seeds the intended watch identity + role + online state, so
-a live area target spans all of them and the Guardian pre-filter / ``watch_offline`` /
-partial-success surfacing can be seen by hand.
+second Guardian of a different child, a Contact, a Guardian whose watch is offline, a Guardian whose
+forced re-fix raises (the browser e2e's Reload-failure persona), and a Guardian whose online watch
+did not respond to the locate so its map keeps a stale pin (the ADR 0007 no-response case). These
+assert each sentinel resolves to the ``DemoPyXploraApi`` and seeds the intended watch identity +
+role + online/response state, so a live area target spans all of them and the Guardian pre-filter /
+``watch_offline`` / partial-success surfacing can be seen by hand.
 """
 
 from __future__ import annotations
 
+import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -32,6 +35,7 @@ from custom_components.xplora_watch.const import (
     DEMO_ERROR_ACCOUNT_EMAIL,
     DEMO_OFFLINE_ACCOUNT_EMAIL,
     DEMO_SECOND_PARENT_ACCOUNT_EMAIL,
+    DEMO_STALE_ACCOUNT_EMAIL,
     DOMAIN,
     MAPS,
 )
@@ -40,12 +44,14 @@ from custom_components.xplora_watch.demo import (
     DEMO_ERROR_WUID,
     DEMO_OFFLINE_WUID,
     DEMO_SECOND_PARENT_WUID,
+    DEMO_STALE_WUID,
     DEMO_WUID,
     DemoPyXploraApi,
     is_demo_account,
     make_controller,
 )
 from custom_components.xplora_watch.pyxplora_api.exception_classes import ConnectionError as XploraConnectionError
+from custom_components.xplora_watch.pyxplora_api.status import WatchOnlineStatus
 
 _ALL_SENTINELS = (
     DEMO_ACCOUNT_EMAIL,
@@ -53,6 +59,7 @@ _ALL_SENTINELS = (
     DEMO_CONTACT_ACCOUNT_EMAIL,
     DEMO_OFFLINE_ACCOUNT_EMAIL,
     DEMO_ERROR_ACCOUNT_EMAIL,
+    DEMO_STALE_ACCOUNT_EMAIL,
 )
 
 
@@ -80,6 +87,7 @@ def test_is_demo_account_recognizes_every_sentinel_and_nothing_else() -> None:
         (DEMO_CONTACT_ACCOUNT_EMAIL, DEMO_CONTACT_WUID, "SECOND", True),
         (DEMO_OFFLINE_ACCOUNT_EMAIL, DEMO_OFFLINE_WUID, "FIRST", False),
         (DEMO_ERROR_ACCOUNT_EMAIL, DEMO_ERROR_WUID, "FIRST", False),
+        (DEMO_STALE_ACCOUNT_EMAIL, DEMO_STALE_WUID, "FIRST", False),
     ],
 )
 async def test_each_demo_sentinel_seeds_its_own_watch_and_role(email: str, wuid: str, guardian_type: str, is_contact: bool) -> None:
@@ -93,9 +101,9 @@ async def test_each_demo_sentinel_seeds_its_own_watch_and_role(email: str, wuid:
     assert (guardian_type != "FIRST") is is_contact
 
 
-async def test_the_five_demo_accounts_are_distinct_watches() -> None:
+async def test_the_six_demo_accounts_are_distinct_watches() -> None:
     """Distinct wuids, so a single area target spans all of them and fans out per ADR 0004."""
-    assert len({DEMO_WUID, DEMO_SECOND_PARENT_WUID, DEMO_CONTACT_WUID, DEMO_OFFLINE_WUID, DEMO_ERROR_WUID}) == 5
+    assert len({DEMO_WUID, DEMO_SECOND_PARENT_WUID, DEMO_CONTACT_WUID, DEMO_OFFLINE_WUID, DEMO_ERROR_WUID, DEMO_STALE_WUID}) == 6
 
 
 async def test_error_account_fails_a_forced_fix_only_after_the_first_cycle_succeeds() -> None:
@@ -136,6 +144,79 @@ async def test_offline_account_refuses_control_actions_but_online_ones_accept() 
     assert await offline.reboot(DEMO_OFFLINE_WUID) is False  # refused == offline
     assert await offline.shutdown(DEMO_OFFLINE_WUID) is False
     assert await online.reboot(DEMO_WUID) is True  # a healthy watch still accepts
+
+
+async def test_offline_account_does_not_respond_and_reports_a_stale_frozen_fix(monkeypatch) -> None:
+    """The offline demo watch is a no-response that keeps its LAST fix, not a fresh "just now" one.
+
+    ADR 0007: poll outcome and fix freshness are independent. An offline watch's locate request can't
+    be delivered, so `askWatchLocate` returns `False` (the coordinator records `no_response` and keeps
+    the last known fix) -- and the fix it keeps was captured *before* the watch stopped responding, so
+    its `tm` is well in the past and is FROZEN (does not advance), so the shown age grows with
+    wall-clock rather than sitting at a fabricated "just now". The raw payload still carries the
+    position, but for an *offline* watch the coordinator drops the coordinates (the `is_online` gate),
+    so its map reads "Location unavailable" -- the stale age surfaces in the header chip. (The
+    online-but-unresponsive persona is the one whose pin is kept; see the next test.)
+    """
+    # Drive `demo`'s clock so we can prove the fix is FROZEN (absolute `tm` never advances) and thus
+    # its age GROWS -- a sliding `now - age` impl would keep the age pinned and fail here. Delegate
+    # localtime/strftime to the real module so the display-string `tm` still formats.
+    clock = {"t": 1_700_000_000}
+    monkeypatch.setattr(
+        "custom_components.xplora_watch.demo.time",
+        SimpleNamespace(time=lambda: clock["t"], localtime=time.localtime, strftime=time.strftime),
+    )
+
+    offline = await _demo_controller(DEMO_OFFLINE_ACCOUNT_EMAIL)
+
+    # The locate request is not delivered -> no-response (the coordinator keeps the last fix).
+    assert await offline.askWatchLocate(DEMO_OFFLINE_WUID) is False
+
+    first = await offline.loadWatchLocation(DEMO_OFFLINE_WUID)
+    first_tm = first["watch_last_location"]["tm"]
+    age1 = clock["t"] - first_tm
+    assert first["lat"] and first["lng"]  # raw payload carries the position (coordinator nulls it)
+    assert age1 >= 15 * 60  # comfortably in the past, not "just now"
+
+    # FROZEN: advance the clock and re-read -- the absolute tm is unchanged, so the age grew with it.
+    clock["t"] += 600
+    second = await offline.loadWatchLocation(DEMO_OFFLINE_WUID)
+    assert second["watch_last_location"]["tm"] == first_tm  # never advanced
+    assert clock["t"] - second["watch_last_location"]["tm"] == age1 + 600  # age grew exactly
+
+    # A reachable Guardian responds and re-fixes to now (the happy path stays fresh).
+    online = await _demo_controller(DEMO_ACCOUNT_EMAIL)
+    assert await online.askWatchLocate(DEMO_WUID) is True
+    fresh = await online.loadWatchLocation(DEMO_WUID)
+    assert clock["t"] - fresh["watch_last_location"]["tm"] < 60
+
+
+async def test_stale_account_is_online_but_did_not_respond_so_its_pin_stays_under_a_stale_banner() -> None:
+    """The 'stale' demo watch is ONLINE (keeps its map pin) yet did NOT respond to the locate.
+
+    This is the reachable-but-stale case ADR 0007 exists for, and the one issue #19's map banner needs:
+    `online` and `responds` are independent, so online-status stops the coordinator dropping the
+    coordinates (a real pin draws) while the no-response keeps an OLDER fix -- the map reads
+    "Watch didn't respond - location from N ago" over a retained pin, and the header chip shows the
+    fix age. Distinct from Offline (coordinates dropped -> "Location unavailable", no pin) and from
+    Error (raises).
+    """
+    stale = await _demo_controller(DEMO_STALE_ACCOUNT_EMAIL)
+    offline = await _demo_controller(DEMO_OFFLINE_ACCOUNT_EMAIL)
+
+    # Online -> the deviceList reports ONLINE, so the coordinator keeps the pin (contrast: offline).
+    assert (await stale.getDeviceList())[DEMO_STALE_WUID]["onlineStatus"] == WatchOnlineStatus.ONLINE.value
+    assert (await offline.getDeviceList())[DEMO_OFFLINE_WUID]["onlineStatus"] == WatchOnlineStatus.OFFLINE.value
+
+    # Being online, it still accepts control actions -- the offline watch refuses them.
+    assert await stale.reboot(DEMO_STALE_WUID) is True
+    assert await offline.reboot(DEMO_OFFLINE_WUID) is False
+
+    # ...but it did NOT respond to the locate -> no-response, keeping an OLDER fix under the pin.
+    assert await stale.askWatchLocate(DEMO_STALE_WUID) is False
+    loc = await stale.loadWatchLocation(DEMO_STALE_WUID)
+    assert loc["lat"] and loc["lng"]  # the retained pin's position is present -> the map draws it
+    assert int(time.time()) - loc["watch_last_location"]["tm"] >= 15 * 60  # stale, not "just now"
 
 
 async def test_primary_demo_account_reports_a_named_safezone_scenario() -> None:
@@ -198,6 +279,7 @@ def _demo_entry(hass: HomeAssistant, email: str, wuid: str) -> MockConfigEntry:
         (DEMO_CONTACT_ACCOUNT_EMAIL, DEMO_CONTACT_WUID),
         (DEMO_OFFLINE_ACCOUNT_EMAIL, DEMO_OFFLINE_WUID),
         (DEMO_ERROR_ACCOUNT_EMAIL, DEMO_ERROR_WUID),
+        (DEMO_STALE_ACCOUNT_EMAIL, DEMO_STALE_WUID),
     ],
 )
 async def test_demo_entry_sets_up_network_free_and_creates_its_watch_device(hass: HomeAssistant, email: str, wuid: str) -> None:

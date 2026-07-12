@@ -18,14 +18,16 @@ ATTRIBUTION: Final = "Data provided by Xplora®"
 # is a safe, self-sufficient switch that needs no environment variable and never touches a real entry.
 # The sentinels seed different accounts so the multi-account service fan-out (ADR 0004) can be
 # exercised in the live UI: a primary Guardian, a second Guardian (a different child), a Contact, a
-# Guardian whose watch is offline (control actions are refused -> the `watch_offline` surfacing), and
-# a Guardian whose *forced* re-fix raises (the map card's Reload-failure path, exercised by the
-# browser e2e suite).
+# Guardian whose watch is offline (control actions are refused -> the `watch_offline` surfacing), a
+# Guardian whose *forced* re-fix raises (the map card's Reload-failure path, exercised by the browser
+# e2e suite), and a Guardian whose watch is online but did not respond to the locate request, so its
+# map keeps a stale pin under a "Watch didn't respond - location from N ago" banner (ADR 0007).
 DEMO_ACCOUNT_EMAIL: Final = "demo@xplora-watch.invalid"
 DEMO_SECOND_PARENT_ACCOUNT_EMAIL: Final = "demo-second-parent@xplora-watch.invalid"
 DEMO_CONTACT_ACCOUNT_EMAIL: Final = "demo-contact@xplora-watch.invalid"
 DEMO_OFFLINE_ACCOUNT_EMAIL: Final = "demo-offline@xplora-watch.invalid"
 DEMO_ERROR_ACCOUNT_EMAIL: Final = "demo-error@xplora-watch.invalid"
+DEMO_STALE_ACCOUNT_EMAIL: Final = "demo-stale@xplora-watch.invalid"
 
 URL_OPENSTREETMAP = "https://nominatim.openstreetmap.org/reverse?lat={}&lon={}&format=jsonv2&accept-language={}"
 URL_MAPBOX = "https://api.mapbox.com/geocoding/v5/mapbox.places/{},{}.json?types=address&limit=1&access_token={}&language={}"
