@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+
+import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -216,6 +219,24 @@ async def test_async_added_to_hass_registers_dispatcher(
 
     await entity.async_will_remove_from_hass()
     assert entity._unsub_dispatchers == []
+
+
+async def test_async_will_remove_from_hass_logs_entity_id(
+    hass: HomeAssistant,
+    mock_config_entry_phone: MockConfigEntry,
+    coordinator_with_data: XploraDataUpdateCoordinator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The removal debug log names the entity being removed, so it is identifiable in the logs."""
+    entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
+    entity.hass = hass
+    entity.entity_id = "device_tracker.test_watch"
+    await entity.async_added_to_hass()
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.xplora_watch"):
+        await entity.async_will_remove_from_hass()
+
+    assert "device_tracker.test_watch" in caplog.text
 
 
 async def test_async_receive_data_updates_when_device_matches(

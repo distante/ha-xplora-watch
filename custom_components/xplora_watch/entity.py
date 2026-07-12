@@ -148,7 +148,7 @@ class XploraBaseEntity(CoordinatorEntity[XploraDataUpdateCoordinator], RestoreEn
         await super().async_will_remove_from_hass()
         for unsub in self._unsub_dispatchers:
             unsub()
-        self._log.debug("When entity is removed from hass")
+        self._log.debug("When entity is removed from hass: %s", self.entity_id)
         self._unsub_dispatchers = []
 
     @callback
