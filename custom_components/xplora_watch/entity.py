@@ -148,7 +148,25 @@ class XploraBaseEntity(CoordinatorEntity[XploraDataUpdateCoordinator], RestoreEn
         await super().async_will_remove_from_hass()
         for unsub in self._unsub_dispatchers:
             unsub()
-        self._log.debug("When entity is removed from hass: %s", self.entity_id)
+        # HA removes an entity through this same method whether it is a transient teardown or a
+        # genuine deletion, so classify the cause for the log. Core sets `_removed_from_registry`
+        # True just before calling us only when the entity's registry entry is actually being
+        # deleted; on a config-entry reload/unload it stays False and the entity is re-added on the
+        # next setup. `getattr` guards the private core attribute so an upstream rename degrades to
+        # the reload/unload label rather than raising.
+        #
+        # Disabling an entity reloads the whole entry, so every entity is torn down -- but only the
+        # one the user disabled carries a disabled registry entry at teardown (core reads the same
+        # flag at removal time), which distinguishes it from its still-enabled siblings.
+        if self.hass.is_stopping:
+            reason = "Home Assistant stopping"
+        elif getattr(self, "_removed_from_registry", False):
+            reason = "deleted from entity registry"
+        elif self.registry_entry is not None and self.registry_entry.disabled:
+            reason = "entity disabled"
+        else:
+            reason = "config entry reload/unload"
+        self._log.debug("Removed %s (%s)", self.entity_id, reason)
         self._unsub_dispatchers = []
 
     @callback

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -227,7 +228,11 @@ async def test_async_will_remove_from_hass_logs_entity_id(
     coordinator_with_data: XploraDataUpdateCoordinator,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The removal debug log names the entity being removed, so it is identifiable in the logs."""
+    """The removal debug log names the entity being removed, so it is identifiable in the logs.
+
+    With no registry deletion and HA running, the removal is a transient reload/unload, so the
+    reason must say so (never "deleted").
+    """
     entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
     entity.hass = hass
     entity.entity_id = "device_tracker.test_watch"
@@ -237,6 +242,58 @@ async def test_async_will_remove_from_hass_logs_entity_id(
         await entity.async_will_remove_from_hass()
 
     assert "device_tracker.test_watch" in caplog.text
+    assert "reload/unload" in caplog.text
+    assert "deleted" not in caplog.text
+    # The old boilerplate prefix carried no information; the line leads with entity + reason now.
+    assert "When entity is removed from hass" not in caplog.text
+
+
+async def test_async_will_remove_from_hass_logs_registry_deletion(
+    hass: HomeAssistant,
+    mock_config_entry_phone: MockConfigEntry,
+    coordinator_with_data: XploraDataUpdateCoordinator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When HA is deleting the entity's registry entry (a real deletion, not a reload), the
+    removal log says so -- core sets `_removed_from_registry` just before calling us."""
+    entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
+    entity.hass = hass
+    entity.entity_id = "device_tracker.test_watch"
+    await entity.async_added_to_hass()
+    # Mirror core: the registry-remove path flips this True before async_will_remove_from_hass.
+    entity._removed_from_registry = True
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.xplora_watch"):
+        await entity.async_will_remove_from_hass()
+
+    assert "device_tracker.test_watch" in caplog.text
+    assert "deleted from entity registry" in caplog.text
+    assert "reload/unload" not in caplog.text
+
+
+async def test_async_will_remove_from_hass_logs_entity_disabled(
+    hass: HomeAssistant,
+    mock_config_entry_phone: MockConfigEntry,
+    coordinator_with_data: XploraDataUpdateCoordinator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Disabling an entity reloads the whole entry, so every entity is torn down -- but the one the
+    user disabled carries a disabled registry entry, and its removal log must say "disabled" (not
+    the generic reload/unload that its still-enabled siblings get)."""
+    entity = _make_entity(mock_config_entry_phone, coordinator_with_data)
+    entity.hass = hass
+    entity.entity_id = "sensor.xplora_dana_watch_distance_papa"
+    await entity.async_added_to_hass()
+    # During a disable-triggered reload, HA has already set disabled_by on this entity's registry
+    # entry before the unload tears it down (core reads the same flag at removal time).
+    entity.registry_entry = SimpleNamespace(disabled=True)
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.xplora_watch"):
+        await entity.async_will_remove_from_hass()
+
+    assert "sensor.xplora_dana_watch_distance_papa" in caplog.text
+    assert "disabled" in caplog.text
+    assert "reload/unload" not in caplog.text
 
 
 async def test_async_receive_data_updates_when_device_matches(
