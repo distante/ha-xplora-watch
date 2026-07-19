@@ -14,7 +14,7 @@ HA Xplora® Watch integration for Home Assistant
 [![Validate with hassfest and HACS](https://github.com/distante/ha-xplora-watch/actions/workflows/validate.yml/badge.svg)](https://github.com/distante/ha-xplora-watch/actions/workflows/validate.yml)
 [![Coverage](https://raw.githubusercontent.com/distante/ha-xplora-watch/main/.github/badges/coverage.svg)](https://github.com/distante/ha-xplora-watch/actions/workflows/test.yml)
 
-[![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg?style=for-the-badge&logo=paypal)](https://paypal.me/saninn)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-PayPal-blue.svg?style=for-the-badge&logo=paypal)](https://paypal.me/saninn)
 
 > **Built to keep your account safe.** This is a fork of the excellent [Ludy87/xplora_watch](https://github.com/Ludy87/xplora_watch) — full credit to @Ludy87 for building the original and figuring out the Xplora API in the first place. Over time Xplora tightened its rate-limits, and the talk-to-the-server-often patterns that used to be fine started getting accounts throttled and banned. This fork reworks how the integration talks to Xplora so that's no longer a risk: it **logs in once** and reuses that session for ~35 days, **consolidates** the per-refresh calls (and caches what doesn't change — locations, chat media), and ships with **polling off by default**, so out of the box it talks to Xplora's servers **only when you ask it to**. Safe by default, nothing to tune.
 
