@@ -35,7 +35,7 @@ jobs:
 
       # NOTE: pin to a commit SHA (like the other workflows) once you settle on a version.
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
