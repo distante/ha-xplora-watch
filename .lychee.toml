@@ -1,0 +1,21 @@
+# Config for the "Docs links" CI workflow (.github/workflows/docs-links.yml) and for
+# ad-hoc local checks: lychee --config .lychee.toml README.md docs
+#
+# CONTRIBUTING.md is intentionally not covered: it uses GitHub's repo-root-relative link
+# convention ("../../issues/new", "../../releases", resolved against the file's /blob/<branch>/
+# URL, not the filesystem), which a filesystem-based checker like lychee has no way to verify.
+accept = [200, 201, 202, 203, 204, 206, 429]
+timeout = 20
+retry_wait_time = 5
+max_retries = 3
+
+# GitHub anchor fragments (e.g. #installation) are resolved against rendered HTML headings,
+# not the raw markdown, so lychee can't verify them — internal anchors are instead checked by
+# scripts/check_docs_links.py (same job, previous step). Leaving include_fragments unset keeps
+# lychee's default of not checking fragments.
+
+exclude = [
+  # Loopback/LAN example hosts used in config snippets elsewhere in the repo, not real links.
+  '^https?://localhost',
+  '^https?://homeassistant\.local',
+]

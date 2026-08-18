@@ -1,8 +1,9 @@
 # HA Xplora® Watch
 
-HA Xplora® Watch integration for Home Assistant
+A Home Assistant integration for Xplora® children's GPS watches — location, chat, alarms, safe
+zones and more, built to keep your Xplora account **safe from rate-limit bans**.
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=distante&repository=ha-xplora-watch&category=integration)\
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=distante&repository=ha-xplora-watch&category=integration)
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg?style=for-the-badge&logo=home-assistant)](https://github.com/hacs/integration)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/distante/ha-xplora-watch?style=for-the-badge&logo=github)](https://github.com/distante/ha-xplora-watch/releases)
 ![GitHub Release Date](https://img.shields.io/github/release-date/distante/ha-xplora-watch?style=for-the-badge&logo=github)
@@ -16,624 +17,81 @@ HA Xplora® Watch integration for Home Assistant
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-PayPal-blue.svg?style=for-the-badge&logo=paypal)](https://paypal.me/saninn)
 
-> **Built to keep your account safe.** This is a fork of the excellent [Ludy87/xplora_watch](https://github.com/Ludy87/xplora_watch) — full credit to @Ludy87 for building the original and figuring out the Xplora API in the first place. Over time Xplora tightened its rate-limits, and the talk-to-the-server-often patterns that used to be fine started getting accounts throttled and banned. This fork reworks how the integration talks to Xplora so that's no longer a risk: it **logs in once** and reuses that session for ~35 days, **consolidates** the per-refresh calls (and caches what doesn't change — locations, chat media), and ships with **polling off by default**, so out of the box it talks to Xplora's servers **only when you ask it to**. Safe by default, nothing to tune.
+> **Built to keep your account safe.** This is a fork of the excellent
+> [Ludy87/xplora_watch](https://github.com/Ludy87/xplora_watch) — full credit to @Ludy87 for
+> building the original and figuring out the Xplora API in the first place. Over time Xplora
+> tightened its rate-limits, and the talk-to-the-server-often patterns that used to be fine started
+> getting accounts throttled and banned. This fork reworks how the integration talks to Xplora so
+> that's no longer a risk: it **logs in once** and reuses that session for ~35 days,
+> **consolidates** the per-refresh calls (and caches what doesn't change — locations, chat media),
+> and ships with **polling off by default**, so out of the box it talks to Xplora's servers **only
+> when you ask it to**. Safe by default, nothing to tune. Full details and numbers:
+> [Why this fork exists](docs/ban-defense.md).
 
 ---
 
 ![HA Xplora® Watch](https://github.com/home-assistant/brands/blob/master/custom_integrations/xplora_watch/logo@2x.png?raw=true)
 
-## Overview
-
 The bundled Lovelace overview card surfaces a watch's online/charging state, battery, last-known
-location, steps, XCoins, unread messages, alarms, silent times and safe-zone status at a glance:
+location, steps, XCoins, unread messages, alarms, silent times and safe-zone status at a glance —
+tap the location row for a live map, or the **Location history** row for a full day-by-day track:
 
-![Overview card](images/images/overview_card.png)
+<p>
+  <img src="https://raw.githubusercontent.com/distante/ha-xplora-watch/main/images/overview_card.png" alt="Overview card" height="420">
+  <img src="https://raw.githubusercontent.com/distante/ha-xplora-watch/main/images/full_map_location.png" alt="Map location popup" height="420">
+</p>
 
-Tapping the location row opens a live map with the watch's last-known position and a refresh button:
-
-![Map location popup](images/images/full_map_location.png)
-
-Tapping the **Location history** row opens a date bar and a map track of where the watch has been on
-a given day — see [Location history](#location-history).
-
-## Try it without a watch (demo mode)
-
-You can explore the integration with **no real device** using its network-free demo mode. Add the
-integration and sign in with any of the demo accounts below (any password works):
-
-| Email | Role | Watch |
-| --- | --- | --- |
-| `demo@xplora-watch.invalid` | Guardian | "Patrick" |
-| `demo-second-parent@xplora-watch.invalid` | Guardian | "Rosa" |
-| `demo-contact@xplora-watch.invalid` | Contact | "Timmy" |
-| `demo-offline@xplora-watch.invalid` | Guardian | "Max" (offline) |
-
-The four accounts let you see the **multi-account service fan-out**: put all four watch devices in one
-area, then a single service call targeting that area acts on the online Guardian watches, skips the
-Contact-only one, and reports the offline one as offline — with a partial-success notification listing
-what didn't run. Target only the Contact watch to see the `not_guardian` error, or only the offline
-watch to see `watch_offline`.
-
-## Migrating from the original Ludy87/xplora_watch integration
-
-This fork keeps the same integration domain (`xplora_watch`) and the same config-entry version as
-the original, so it's installed **in place of** it, not alongside it — your existing config entry,
-login, and entities carry over. You do **not** need to remove and re-add the integration or
-re-enter your credentials.
-
-**What's handled automatically** the first time Home Assistant starts on the new code:
-
-- Entity unique IDs are reformatted to the current naming scheme. Legacy dash/space-separated
-  unique IDs are rewritten to the underscore-separated form used today; entity IDs, history, and
-  customizations are preserved — only the internal unique ID changes.
-- The old per-watch alarm/silent `switch.*` entities are removed. They were replaced by the
-  `*_alarms` / `*_silents` sensors described in [Alarms & Silent Times](#alarms--silent-times). If
-  you have automations, scripts, or dashboards referencing the old switches, point them at the new
-  sensors (see that section for the attribute layout).
-- A previously configured polling interval is kept, but snapped to the nearest
-  [supported preset](#update-interval-polling) (30 minutes minimum) — it is **not** reset to "off".
-  Polling-off is only the default for brand-new installs; upgrades keep polling, just at a safer
-  interval.
-
-**What you still need to do yourself:**
-
-1. Back up your Home Assistant instance before upgrading, as you would for any integration update.
-2. If you added the original as a HACS custom repository (pointing at `Ludy87/xplora_watch`),
-   remove that custom repository and add this one (`distante/ha-xplora-watch`) instead — HACS
-   tracks repositories by URL, not by integration domain, so it won't follow the fork on its own.
-   If you installed manually, just replace the contents of `custom_components/xplora_watch/`.
-3. Restart Home Assistant once after upgrading so the entity/option migrations above can run.
-4. Open the integration's **Options** afterward and review the settings this fork adds: the scan
-   interval is now a fixed dropdown of presets (instead of a free-form number) and there's a new
-   "Mark chat messages as read while polling" toggle (`auto_mark_read`, default off).
-5. For the rate-limit-safe behavior this fork exists to provide, consider setting the scan interval
-   to **Off** and driving updates via the `xplora_watch.see` service on your own schedule instead of
-   keeping a migrated polling interval — see [Update interval (polling)](#update-interval-polling).
+More cards — chat, per-watch map, alarms & silent times — are covered in
+[Dashboard cards](docs/dashboard-cards.md).
 
 ## Features
 
-- Control your watch from Home Assistant
-- Receive notifications from your watch
-- Track your watch's location
-- View your watch's [location history](#location-history) (where it has been)
-- View your watch's battery level
-- And more!
-
-**IMPORTANCE: Of a service is activated by automation, the sensors will no longer be updated. Therefore, activate the `xplora_watch.see` service with a corresponding interval.**
-
-| Features                                                                                             | Type           |
-| ---------------------------------------------------------------------------------------------------- | -------------- |
-| Battery                                                                                              | Sensor         |
-| Watch-Xcoin                                                                                          | Sensor         |
-| Watch Step per Day                                                                                   | Sensor         |
-| Watch Online state                                                                                   | Binary Sensor  |
-| [Watch is in Safezone](#safe-zones)                            | Binary Sensor  |
-| [Current safe zone (watch-reported zone name)](#safe-zones)    | Sensor         |
-| charging state                                                                                       | Binary Sensor  |
-| [Watch alarm(s)](#alarms--silent-times)                        | Sensor + Services |
-| [Watch silent time(s)](#alarms--silent-times)                  | Sensor + Services |
-| [Send Message](#send-message)                                  | Notify         |
-| [Send Message Service](#send-message-via-service-v203)         | Service        |
-| [Read Messages from Account](#read-messages-from-account-v240) | Service        |
-| [Delete Messages from App](#delete-messages-from-app-v260)     | Service        |
-| [Manually update](#manually-update-v208--v209)                 | Service        |
-| Turn off Watch                                                                                       | Service        |
-| Watch Tracking                                                                                       | Device Tracker |
-| [Watch Show Safezone(s)](#safe-zones)                          | Device Tracker |
-| [Location history](#location-history)                          | Sensor + Service + Card |
-
----
-
-## Account types
-
-Your Xplora account can relate to a given watch in one of two ways, and the integration mirrors what
-the official Xplora "Life" app shows you for that role — so if your dashboard looks sparser than you
-expected, this is usually why:
-
-- **Guardian** — the account that owns and administers the watch. A Guardian gets **everything**: all
-  sensors and trackers, plus the reboot/shutdown buttons and the alarm/silent-time controls and
-  services.
-- **Contact** — any other account linked to the watch (for example a family member who can chat with
-  the child but doesn't administer the watch). A Contact is **chat-first**: it gets only the handful
-  of things Xplora actually reports to a Contact, and none of the entities that would otherwise sit
-  permanently empty — nor the Guardian-only controls, which the integration doesn't show a Contact,
-  mirroring the official Xplora "Life" app.
-
-The relationship is **per watch**. On an account with more than one watch you can be the Guardian of
-one and a Contact of another, and each watch is gated independently — so missing entities on one watch
-just mean you're a Contact of *that* watch, not a bug.
-
-### What each account gets
-
-|                                                       | Guardian | Contact |
-| ----------------------------------------------------- | :------: | :-----: |
-| Chat (messages)                                       |    ✅    |   ✅    |
-| Online status                                         |    ✅    |   ✅    |
-| Steps                                                 |    ✅    |   ✅    |
-| XCoins                                                |    ✅    |   ✅    |
-| Last update                                           |    ✅    |   ✅    |
-| **Update** button (on-demand refresh)                 |    ✅    |   ✅    |
-| Battery                                               |    ✅    |   —     |
-| Charging                                              |    ✅    |   —     |
-| Location (device tracker)                             |    ✅    |   —     |
-| Distance                                              |    ✅    |   —     |
-| Safe zones (binary sensor + label sensor + trackers)  |    ✅    |   —     |
-| Location history                                      |    ✅    |   —     |
-| Alarms / silent-time sensors                          |    ✅    |   —     |
-| **Reboot** / **Shutdown** buttons                     |    ✅    |   —     |
-| **Refresh Alarms & Silent Times** button              |    ✅    |   —     |
-| Reboot / shutdown / alarm / silent-time **services**  |    ✅    |   —     |
-
-A Contact never has the Guardian-only entities created in the first place — and if you upgraded from
-an older version that did create them, they're removed automatically the first time the upgraded
-integration starts. The overview card simply shows fewer tiles (and no location row); there's nothing
-to disable by hand.
-
-If a Contact — or one of their automations — calls a Guardian-only service (reboot, shutdown, or any
-alarm/silent-time change), the call is refused with a clear message that the action is *restricted to
-the watch's primary guardian*, matching the **"Primary guardian only"** note shown on those services
-in Developer Tools. Chat, on-demand refresh (`xplora_watch.see`), and the history services stay
-available to everyone.
-
----
-
-## Installation
-
-### MANUAL INSTALLATION
-
-Copy the xplora_watch [last Release](https://github.com/distante/ha-xplora-watch/releases) folder and all of its contents into your Home Assistant's custom_components folder. This folder is usually inside your /config folder. If you are running Hass.io, use SAMBA to copy the folder over. If you are running Home Assistant Supervised, the custom_components folder might be located at /usr/share/hassio/homeassistant. You may need to create the custom_components folder and then copy the xplora_watch folder and all of its contents into it. Alternatively, you can install xplora_watch through HACS by adding this repository.
-
-### INSTALLATION mit HACS
-
-1. Ensure that [HACS](https://hacs.xyz/) is installed.
-2. Search for and install the "**HA Xplora® Watch**" integration. [![GitHub release (latest by date)](https://img.shields.io/github/v/release/distante/ha-xplora-watch)](https://github.com/distante/ha-xplora-watch/releases)
-3. [Configuration for the "HA Xplora® Watch" integration is now performed via a config flow as opposed to yaml configuration file.](#basis-configuration)
-
----
-
-## Basis Configuration
-
-1. Go to HACS -> Integrations -> Click "+"
-2. Search for "HA Xplora® Watch" repository and add to HACS
-3. Restart Home Assistant when it says to.
-4. In Home Assistant, go to Configuration -> Integrations -> Click "+ Add Integration"
-5. Search for "HA Xplora® Watch" and follow the instructions to setup.
-
-HA Xplora® Watch should now appear as a card under the HA Integrations page with "Configure" selection available at the bottom of the card.
-
----
-
-## Update interval (polling)
-
-- Polling is the integration's only standing source of rate-limit/ban risk, so it is **off by
-  default** (no recurring cloud calls). The update interval is chosen from a small set of safe
-  presets: **Off / Every 30 minutes / Every hour / Every 2 hours** (in the integration's
-  _Options_).
-- With polling **Off**, data refreshes only when you call the `xplora_watch.see` service. For
-  faster or conditional updates, create your own automation that calls `xplora_watch.see` on
-  whatever schedule/trigger you want (and accept the corresponding ban risk):
-
-  ```yaml
-  # Example: refresh every 10 minutes only while someone is home
-  automation:
-    - alias: Xplora refresh
-      trigger:
-        - platform: time_pattern
-          minutes: "/10"
-      condition:
-        - condition: state
-          entity_id: zone.home
-          state: "1"   # at least one person home
-      action:
-        - action: xplora_watch.see
-          data:
-            device_id: <your watch device>   # the "Watch(es)" field: pick one or more "Dana Watch (Mom)" devices
-  ```
-
-- Existing installs are migrated automatically: a previously configured interval is snapped to
-  the nearest preset the next time you open _Options_ (anything faster than 30 minutes becomes
-  30 minutes).
-
-### Alarms / silent times / safe zones interval
-
-Alarms, silent-time windows and safe-zone definitions can't be bundled into the main status
-fetch (Xplora serves each from its own per-watch request), but they rarely change — so they have
-their **own** interval in _Options_, **"Alarms/silent/safe-zone refresh"**:
-**Off (manual only) / Every 6 hours / Daily / With every poll**, defaulting to **Off**.
-
-- With it **Off**, this data is fetched once and then reused, so normal polls stay lean. Refresh
-  it on demand by calling the `xplora_watch.refresh_functions` service, or simply by **tapping the
-  alarms/silent count on the overview card** (which opens the management list and refreshes it).
-- The alarm/silent edit services (create/update/delete/enable) always refresh their own list
-  immediately, so changes you make show up regardless of this setting.
-
-### Auto-mark messages as read
-
-- A separate _Options_ toggle, **"Mark chat messages as read while polling"** (default **off**),
-  controls whether fetched chat messages are marked read on Xplora's servers. Leaving it off
-  preserves the unread-message count and avoids extra write traffic.
-
----
-
-## Why this fork exists: the ban problem and solution
-
-The original [Ludy87/xplora_watch](https://github.com/Ludy87/xplora_watch) did the hard work of making Xplora watches usable in Home Assistant at all. As Xplora tightened its rate-limits over time, the original's chattier API patterns started leading to throttling and bans. This fork reworks those patterns to be a good citizen of a service that, frankly, works well — through three changes:
-
-- **No per-poll re-login.** The biggest driver of the bans: the old client logged in *again* on every single poll. This fork logs in **once** and reuses the session token for its full lifetime (~35 days); a real login only happens when the token actually expires. This is the change that matters most.
-- **Polling off by default.** New installs make **no recurring calls at all** — data refreshes only when you call `xplora_watch.see` (manually or from your own automation). If you do opt into polling, it's a safe preset (30 min / 1 hour / 2 hours), never a tight loop.
-- **Fewer calls per refresh.** Account-wide status (battery, location, online, steps, unread count, …) comes from a single consolidated request, and the rarely-changing alarm/silent/safe-zone data has its own [interval](#alarms--silent-times--safe-zones-interval) that defaults to *off* (refresh on demand). Redundant calls that re-fetched data already in hand were removed, and reverse-geocoding is cached, so a watch that hasn't moved is never looked up twice.
-- **Nothing is downloaded twice.** Chat attachments (voice, image, video) are fetched from Xplora once and then served from the local `config/www/…` copy — re-reading a thread never re-downloads media you already have. And concurrent refreshes that ask for the same thing (two cards rendering at once, a button press racing a scheduled poll) are coalesced onto a *single* network request instead of each hitting the API.
-
-### By the numbers
-
-A request count derived from the actual code paths (old = the unpatched upstream client at tag `2.12.9`; counts exclude the retry loops the old client added, so they are conservative floors). One watch:
-
-| | Old integration | This fork |
-| --- | --- | --- |
-| Logins per refresh | **≥ 1** (every poll) | **0** (token reused ~35 days) |
-| Xplora requests per refresh | **~28** | **~3** (lean default) … **~8** (everything enabled) |
-| Default poll cadence | every 180 s (480/day) | **off** (0/day until you ask) |
-| Busiest possible day | **~13,400 requests + ≥480 logins** (at the 180 s default; far higher on its free-form slider) | **~384 requests, 0 logins** (fastest 30-min preset, everything on) |
-
-So this fork's *worst* day is roughly **35× lighter** than the old integration's *idle, default* day — and it removes the per-refresh login that actually triggered the bans.
-
-**The goal is not to trick or evade Xplora's rate limits** — it's to use the API responsibly so accounts stay healthy and the integration remains viable for everyone. The default configuration talks to Xplora's servers only when *you* ask it to.
-
----
-
-## Downloaded from voice messages, Videos and Images
-
-- All voice messages, videos and images are stored in `config/www/{voice|video|image|}`.
-  - The voice message will be downloaded as amr and converted to mp3.
-    - This conversion uses **ffmpeg**, run via Home Assistant's built-in `ffmpeg` integration. Most installs already have it through `default_config`, so there is nothing to do; on a minimal setup that doesn't, add `ffmpeg:` to your `configuration.yaml`. (Home Assistant OS, Supervised, and the official Container image bundle the `ffmpeg` binary.) If the `ffmpeg` integration isn't available, only the voice→mp3 conversion is skipped (a warning is logged) — text messages, images and videos are unaffected.
-  - Videos as mp4 (plus a jpeg thumbnail)
-  - Images as jpeg
-- **Each attachment is downloaded only once.** Before fetching a voice/image/video from Xplora, the integration checks for the already-cached file under `config/www/…` and skips the (rate-limited) remote download if it's there. Re-reading a chat thread — whether from the card's refresh button, a service call, or render-on-refresh — re-downloads nothing you already have. (A video is only treated as cached once *both* the mp4 and its thumbnail are present.)
-
----
-
-
-
-## Alarms & Silent Times
-
-> **⚠️ Breaking change:** the per-entry `switch.*_alarm_*` / `switch.*_silent_*` entities have been
-> **removed**. Each watch's alarms and silent-time windows are now exposed as **two stable list
-> sensors** instead, and are managed through **services** (and an optional dashboard card). The old
-> switches appeared and disappeared as the lists changed on the watch and could only be toggled;
-> the new model lets you **view, create, edit, delete and enable/disable** entries from the UI
-> without entities churning. The old `switch.*_alarm_*` / `switch.*_silent_*` registry entries are
-> **removed automatically** the first time the upgraded integration starts (restart Home Assistant
-> after updating), and any dashboard card that referenced them should be replaced with the new
-> [card](#custom-dashboard-card).
-
-### Sensors
-
-Per watch (both **disabled by default** — enable them on the device page):
-
-| Sensor               | State              | Key attributes                                                            |
-| -------------------- | ------------------ | ------------------------------------------------------------------------- |
-| `sensor.<watch>_alarms`  | number of alarms   | `alarm`: list of `{id, name, start, weekRepeat, weekdays, days, status}`  |
-| `sensor.<watch>_silents` | number of silents  | `silent`: list of `{id, start, end, weekRepeat, weekdays, days, status}`  |
-
-Each entry carries the `id` you pass to the update/delete/enable services, the time(s) as `HH:MM`,
-and the repeat days in three forms: `weekRepeat` (raw 7-char `0`/`1` string, index 0 = Sunday),
-`weekdays` (canonical keys, e.g. `["mon","tue"]`) and `days` (localized, e.g. `Mon, Tue`).
-
-### Services
-
-| Service                          | Purpose                                  |
-| -------------------------------- | ---------------------------------------- |
-| `xplora_watch.create_alarm`      | Create an alarm                          |
-| `xplora_watch.update_alarm`      | Change an alarm's time / days / name     |
-| `xplora_watch.delete_alarm`      | Delete an alarm                          |
-| `xplora_watch.set_alarm_enabled` | Enable or disable an alarm               |
-| `xplora_watch.create_silent`     | Create a silent-time window              |
-| `xplora_watch.update_silent`     | Change a silent window's start/end/days  |
-| `xplora_watch.delete_silent`     | Delete a silent-time window              |
-| `xplora_watch.set_silent_enabled`| Enable or disable a silent-time window   |
-| `xplora_watch.turn_all_alarms_on` / `..._off`  | Enable or disable **every** alarm on the watch(es) in one call         |
-| `xplora_watch.turn_all_silents_on` / `..._off` | Enable or disable **every** silent-time window on the watch(es) in one call |
-
-Common targeting: every service has a **Watch(es)** field — a device picker filtered to your Xplora
-watches (e.g. `Dana Watch (Mom)`), so you choose the watch directly; one pick identifies both the
-watch and the account behind it. Times (`start`, `end`) are `HH:MM`; `weekdays` is a list of
-`mon`,`tue`,`wed`,`thu`,`fri`,`sat`,`sun`. The `turn_all_*` services need only the watch
-(they enumerate every entry themselves). The `alarm_id` / `silent_id` for updates and deletes come
-from the matching sensor's attributes — or, more easily, from the **copy buttons on the dashboard
-card** (see below), which hand you the id or a complete, ready-to-paste service call.
-
-```yaml
-# Create a school-night silent window, 22:00–07:00, Mon–Fri
-action: xplora_watch.create_silent
-data:
-  device_id: <watch device>     # the "Watch(es)" field — the "Dana Watch (Mom)" device
-  start: "22:00"
-  end: "07:00"
-  weekdays: [mon, tue, wed, thu, fri]
-```
-
-```yaml
-# Disable a single alarm (alarm_id taken from sensor.<watch>_alarms attributes)
-action: xplora_watch.set_alarm_enabled
-data:
-  device_id: <watch device>
-  alarm_id: alarm-123
-  enabled: false
-```
-
-```yaml
-# Silence everything for the day (e.g. a school holiday) — no per-entry ids needed
-action: xplora_watch.turn_all_silents_off
-data:
-  device_id: <watch device>
-```
-
-> **Note (polling off by default):** with polling disabled, a successful create/update/delete/toggle
-> refreshes only that one list, so the sensor reflects the change immediately without triggering a
-> full account poll.
-
-### Custom dashboard card
-
-The integration bundles a dependency-free Lovelace card and registers it automatically (no manual
-resource needed). Add it from the card picker (**Xplora Watch Alarms / Silent Times**) or via YAML,
-pointing it at one of the list sensors. It renders each entry with its time and days, a toggle to
-enable/disable, edit/delete buttons, and an **Add** form — all wired to the services above.
-
-Each row's **⋮ (more)** menu has three **copy** options, so you can build automations without
-hunting for ids:
-
-- **Copy ID** — the raw `alarm_id` / `silent_id`.
-- **Copy service call** — a complete, paste-ready `set_alarm_enabled` / `set_silent_enabled`
-  automation action with the watch target, the id and the current `enabled` state already filled in.
-- **Copy payload** — the `create_alarm` / `create_silent` service-data needed to reproduce that
-  entry on another watch.
-
-The card header's own **⋮ (more)** menu has **Enable all** / **Disable all**, which call the
-`turn_all_alarms_*` / `turn_all_silents_*` services for the watch the card is bound to.
-
-```yaml
-type: custom:xplora-watch-card
-entity: sensor.kid_one_watch_silents   # an *_alarms or *_silents sensor
-title: Silent times                    # optional
-```
-
-Pointed at an `*_alarms` sensor it renders the watch's alarms, each with its time, days and an
-enable/disable toggle, plus an **Add alarm** form:
-
-| Alarms card                            | Add alarm                            |
-| -------------------------------------- | ------------------------------------ |
-| ![Alarms card](images/images/alarm_card.png) | ![Add alarm](images/images/alarm_add.png) |
-
-Pointed at a `*_silents` sensor it renders the silent-time windows (start–end) the same way, with
-an **Add silent time** form:
-
-| Silent times card                          | Add silent time                          |
-| ------------------------------------------ | ---------------------------------------- |
-| ![Silent times card](images/images/silence_card.png) | ![Add silent time](images/images/silence_add.png) |
-
-#### Common tasks
-
-**Turn an alarm/silent time on or off by hand.** Use the toggle switch on the card row — that's it,
-no automation needed.
-
-**Build an automation that turns a specific alarm on/off** (e.g. disable the school alarm during the
-holidays):
-
-1. Add the **Alarms** (or **Silent Times**) card and point it at the watch's `*_alarms` /
-   `*_silents` sensor.
-2. On the row you want, open the **⋮** menu → **Copy service call**. This puts a ready-to-use
-   action on your clipboard, with the watch (as its own entity) and the entry id already filled in.
-3. Create an automation, switch the action editor to **YAML mode**, and paste. Flip `enabled: true`
-   to `false` (or vice-versa) for what you want it to do. Example of what you'll paste:
-
-   ```yaml
-   action: xplora_watch.set_alarm_enabled
-   target:
-     entity_id: sensor.kid_one_watch_alarms   # the card fills in the watch's own entity
-   data:
-     alarm_id: alarm-123
-     enabled: false
-   ```
-
-4. Add your trigger (a time, a calendar, an `input_boolean`, …) and save.
-
-> **Tip:** **Copy ID** gives you just the `alarm_id` / `silent_id` if you'd rather build the action
-> from scratch, and **Copy payload** gives you the `create_alarm` / `create_silent` data to clone an
-> entry onto another watch.
-
-**Turn *all* alarms or silent times on/off at once.** Either click the card header's **⋮** menu →
-**Enable all** / **Disable all**, or call the bulk service from an automation (no ids needed):
-
-```yaml
-# Silence every window on a school holiday, restore them in the evening
-action: xplora_watch.turn_all_silents_off
-data:
-  device_id: <watch device>
-```
-
-The matching `turn_all_alarms_on` / `turn_all_alarms_off` / `turn_all_silents_on` services work the
-same way. The **Watch(es)** field is multi-select, so you can apply it to several watches at once.
-
-#### Chat card
-
-A messenger-style view of one watch's chat history with a box to send a new message — so you can
-read and reply without calling services by hand. Add it from the card picker (**Xplora Watch
-Chat**) or via YAML, pointing it at the watch's `*_message` sensor:
-
-```yaml
-type: custom:xplora-watch-chat-card
-entity: sensor.kid_one_watch_message   # the watch's *_message sensor
-title: Messages                        # optional
-```
-
-Messages are shown as bubbles (left = from the watch, right = sent from Home Assistant), oldest at
-the top. Text and emoji are shown inline, and voice, image and video attachments are rendered from
-the media the integration downloads on refresh. Type in the box and press **Enter** (or the send
-button) to send;
-the refresh button re-reads the thread (and fetches any new attachments). A full-screen button
-expands the chat to fill the screen — handy for long histories on a phone. The card opens straight
-from the **Unread** tile of the overview card too.
-
-> [!NOTE]
-> The `*_message` sensor is **disabled by default** — enable it on the watch's device page before
-> adding the card. The card shows a placeholder until the sensor is available, and fetches the
-> thread automatically the first time it opens with nothing cached.
-
-![Chat card](images/images/chat_card.png)
-
-#### Map card
-
-A standalone card that shows **one watch's current location** on a map, right on your dashboard —
-no popup needed. Add it from the card picker (**Xplora Watch Map**) or via YAML, pointing it at any
-watch entity or the watch's device:
-
-![Map card](images/images/map_card.png)
-
-```yaml
-type: custom:xplora-watch-map-card
-entity: device_tracker.kid_one_watch_tracker   # any watch entity, OR:
-# device: 1a2b3c…                              # the watch's device id
-title: Kid One                                 # optional (default: the watch's name)
-aspect_ratio: "16:9"                           # optional (default "16:9")
-show_header: true                              # optional (set false for just the map)
-```
-
-The card carries:
-
-- A **fix-age banner** that reports the poll outcome (Updated / Watch didn't respond / Update failed)
-  and, separately, **how old the shown position is** — so a stale pin is never mistaken for a live
-  one.
-- A **reload** button that forces the watch to report a **fresh** position (it presses the watch's
-  **Update** button).
-- An **expand** button that opens the same map full-screen — the identical map (and reload button)
-  you get by tapping the location row on the [overview card](#overview).
-
-If you have enabled *Refresh data when a card is shown* (off by default), the map card pulls a fresh
-fix on first render — and if you also have the overview card on the same view, the two share a single
-request, so adding the map card doesn't increase how often the watch is contacted.
-
-> [!NOTE]
-> **The map card is empty or has no reload button.** The card needs the watch's **Update** button
-> entity enabled — enable it in Settings → Devices & Services → the watch → the disabled *Update*
-> entity. Reload presses that button to fetch a fresh position. A **Contact** account (not the
-> watch's Guardian) has no location data at all, so its map card stays empty by design — see
-> [Account types](#account-types).
-
----
-
-## Location history
-
-The phone app shows where the watch has been during the day as a map track (about the last 3 days).
-Home Assistant can show the same — and keep **much more** than the app does — through an optional
-**location-history sensor** plus a map view in the overview card.
-
-> [!NOTE]
-> The `sensor.<watch>_location_history` sensor is **disabled by default** (like the message sensor).
-> Enable it on the watch's device page first. While it is disabled the integration makes **zero**
-> extra requests for history, keeping the [ban-safe default](#why-this-fork-exists-the-ban-problem-and-solution).
-
-### How it works
-
-- **Today's** track is fetched on demand when you open the Location history view (and always shown
-  fresh there). It is deliberately kept **off** the regular `xplora_watch.see` / polling cycle, so a
-  normal location update never adds a history request — opening the view (or a manual refresh) is what
-  pulls today.
-- The watch's backend only serves roughly the **last 3 days**. To build a longer archive, call the
-  **`xplora_watch.fetch_history`** service once a day (it defaults to *yesterday*). Everything it
-  fetches is cached locally and kept for the configured **retention** (default **14 days**, range
-  1–90; change it under the integration's **Configure** dialog → *History retention (days)*).
-- The sensor's **state** is the number of recent points (last 24 h, capped) — small and
-  recorder-safe. The full per-day tracks live in HA storage and are read on demand by the card, so
-  they never bloat the recorder database.
-- All dates and times are shown in the **watch's** timezone.
-
-### Viewing the track in the overview card
-
-Tap the **Location history** row on the [overview card](#overview) to open the history view:
-
-- A date bar — `‹  28.06.2026  ›  Today` — sits at the top. The **arrows** step through the days that
-  have data; the **Today** button jumps back to the latest day.
-- Tapping the **date** opens a month **calendar** that highlights the days with data (the recent days
-  plus everything you have archived); pick any highlighted day to load it.
-- The selected day's track is drawn as a polyline on the map below. Today is always re-fetched fresh;
-  past days come from the local cache (no network) once they have been fetched.
-
-![Location history](images/images/location_history_card.png)
-![Location history calendar](images/images/location_history_calendar.png)
-
-### Keeping a long archive (daily automation)
-
-Run `xplora_watch.fetch_history` once a day so the archive grows beyond what the watch serves:
-
-```yaml
-# Archive yesterday's track every morning at 03:00
-alias: Xplora archive location history
-trigger:
-  - platform: time
-    at: "03:00:00"
-action:
-  - action: xplora_watch.fetch_history
-    data:
-      device_id: <watch device>             # the "Watch(es)" field — the "Dana Watch (Mom)" device
-      # date: "2026-06-25"                    # optional; omit to fetch yesterday (YYYY-MM-DD)
-```
-
-Pick the watch with the device/area target picker, exactly like the other services. Omit `date` to
-archive yesterday; pass a `YYYY-MM-DD` date to backfill a specific day the watch still serves.
-Increase **History retention (days)** in the **Configure** dialog to keep more than the default two
-weeks.
-
----
-
-## Safe zones
-
-Safe zones are the named geofences a Guardian sets up **in the Xplora app** (e.g. "Home",
-"School"). The **watch itself** checks whether it is inside one and reports the result with every
-location update — the integration only relays that report, it never re-computes zone membership.
-Safe zones are deliberately **not** Home Assistant zones: they stay Xplora-owned, and converting
-them would affect every person/tracker in your Home Assistant instance.
-
-Three kinds of entities surface them (all Guardian-only):
-
-- **`binary_sensor.<watch>_safezone`** — the in/out alert. It is a *safety* sensor, so **on means
-  the watch is OUTSIDE every safe zone** (the alert state) and off means it is inside one.
-  This is the only entity the **"Home is Safezone"** option affects: with it enabled, being
-  within your Home Assistant home radius also counts as "inside", even if the watch itself
-  reports otherwise.
-- **`sensor.<watch>_current_safezone`** — the **name** of the safe zone the watch says it is in
-  right now (disabled by default). While the watch is outside every safe zone the state is
-  **unknown** — that is the normal "not in any zone" reading, **not** an error. The sensor is a
-  pure watch report: "Home is Safezone" has no effect on it, and there is no fixed
-  "outside"-style state that could collide with a zone you named yourself.
-- **`device_tracker.<watch>_safezone_*`** — one per configured safe zone (disabled by default).
-  These exist to draw the zone circles on the map: their coordinates are the zone's centre and
-  their `gps_accuracy` its radius. The zone's own name is in the `safezone_name` attribute; the
-  entity's *state* is computed by Home Assistant from the zone's coordinates (usually
-  `not_home`, or the name of an HA zone covering that spot) — it does **not** show the Xplora
-  zone name as the state.
-
-The overview card's **Safe zone tile** combines the first two: it shows **Outside** when the
-binary sensor alerts, the reported zone name while inside one (with the `current_safezone`
-sensor enabled), and plain **Inside** when no zone name is known.
-
----
-
-## Send Message
-
-> **⚠️ Breaking change:** `notify.xplora_watch` has been **removed**. Use the `xplora_watch.send_message` service instead (available in the HA developer tools UI). **All services now pick the watch *device*** in a single **Watch(es)** field (e.g. `Dana Watch (Mom)`), filtered to your Xplora watches — one pick identifies both the watch and its account, replacing the old `user` + `target` selectors. Update any automation that used `user:` / `target:` (the magic `all` is gone — the field is multi-select instead).
-
-```yaml
-action: xplora_watch.send_message
-data:
-  device_id: <watch device>   # the "Watch(es)" field — select one or more "Dana Watch (Mom)" devices
-  message: "Hello!"
-```
-
-
-## Debug
-
-```yaml
-logger:
-  logs:
-    custom_components.xplora_watch: debug
-```
+- Track your watch's live location and its [location history](docs/location-history.md)
+- Chat with the watch and receive its messages, including voice/photo/video attachments
+- Manage [alarms and silent times](docs/alarms-and-silent-times.md) from the UI, no phone needed
+- [Safe-zone](docs/safe-zones.md) arrival/departure sensors
+- Battery, charging, online state, steps, XCoins
+- Reboot / shut down the watch remotely (Guardian accounts)
+- A full [services API](docs/services.md) for automations, plus dependency-free
+  [dashboard cards](docs/dashboard-cards.md) for everything above
+- No real watch yet? Explore it risk-free in [demo mode](docs/demo-mode.md)
+
+## Quickstart
+
+1. Install via [HACS](https://hacs.xyz/): search for "**HA Xplora® Watch**" and add it.
+2. Restart Home Assistant when prompted.
+3. **Settings → Devices & Services → + Add Integration** → search "**HA Xplora® Watch**" → sign in.
+
+That's it — polling is **off by default**, so nothing talks to Xplora's servers until you ask it
+to (call `xplora_watch.see`, or turn on polling in the integration's **Configure** dialog). See
+[Installation & configuration](docs/installation.md) for manual installs and every option, or
+[Update interval (polling)](docs/polling.md) for how to drive refreshes safely.
+
+Upgrading from the original `Ludy87/xplora_watch`? See
+[Migrating from Ludy87/xplora_watch](docs/migrating-from-ludy87.md) — it installs in place, no
+re-login needed.
+
+## Documentation
+
+The full manual lives in [`docs/`](docs/index.md):
+
+| | |
+| --- | --- |
+| [Installation & configuration](docs/installation.md) | [Migrating from Ludy87/xplora_watch](docs/migrating-from-ludy87.md) |
+| [Try it without a watch (demo mode)](docs/demo-mode.md) | [Account types: Guardian vs. Contact](docs/account-types.md) |
+| [Update interval (polling)](docs/polling.md) | [Why this fork exists: the ban problem](docs/ban-defense.md) |
+| [Alarms & silent times](docs/alarms-and-silent-times.md) | [Location history](docs/location-history.md) |
+| [Safe zones](docs/safe-zones.md) | [Send a message](docs/send-message.md) |
+| [Voice, video & image messages](docs/media.md) | [Dashboard cards](docs/dashboard-cards.md) |
+| [Services reference](docs/services.md) | [Troubleshooting](docs/troubleshooting.md) |
+
+## Getting help
+
+Search [existing issues](https://github.com/distante/ha-xplora-watch/issues) before opening a new
+one, and use [Discussions](https://github.com/distante/ha-xplora-watch/discussions) for questions
+that aren't bug reports. See [Troubleshooting](docs/troubleshooting.md) for debug logging.
+
+## License
+
+[MIT](LICENSE). This project is a fork of [Ludy87/xplora_watch](https://github.com/Ludy87/xplora_watch);
+see [Why this fork exists](docs/ban-defense.md) for what changed and why.

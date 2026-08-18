@@ -1,0 +1,48 @@
+name: Docs links
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "README.md"
+      - "docs/**"
+      - ".lychee.toml"
+      - "scripts/check_docs_links.py"
+      - ".github/workflows/docs-links.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "README.md"
+      - "docs/**"
+      - ".lychee.toml"
+      - "scripts/check_docs_links.py"
+      - ".github/workflows/docs-links.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  link-check:
+    name: Check docs links
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Check internal links and anchors (README.md, docs/*.md)
+        run: python3 scripts/check_docs_links.py
+
+      - name: Check external links (lychee)
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: --config .lychee.toml --no-progress README.md docs
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
