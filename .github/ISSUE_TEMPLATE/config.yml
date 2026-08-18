@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Documentation
-    url: https://ha-smart-cover-automation.helgeklein.com/
+    url: https://github.com/distante/ha-xplora-watch#readme
     about: Read the integration's documentation for setup guides and configuration help
   - name: Discussions
-    url: https://github.com/helgeklein/ha-smart-cover-automation/discussions
+    url: https://github.com/distante/ha-xplora-watch/discussions
     about: Ask questions and discuss ideas with the community

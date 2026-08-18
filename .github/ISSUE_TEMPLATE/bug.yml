@@ -26,7 +26,7 @@ body:
         required: true
       - label: This issue only contains 1 issue (if you have multiple issues, open one issue for each issue).
         required: true
-      - label: This issue is not a duplicate issue of any [previous issues](https://github.com/helgeklein/ha-smart-cover-automation/issues?q=is%3Aissue).
+      - label: This issue is not a duplicate issue of any [previous issues](https://github.com/distante/ha-xplora-watch/issues?q=is%3Aissue).
         required: true
 - type: textarea
   attributes:

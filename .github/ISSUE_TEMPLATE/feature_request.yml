@@ -10,7 +10,7 @@ body:
   attributes:
     label: Checklist
     options:
-      - label: This feature request is not a duplicate of any [previous feature requests](https://github.com/helgeklein/ha-smart-cover-automation/issues?q=is%3Aissue+label%3Aenhancement).
+      - label: This feature request is not a duplicate of any [previous feature requests](https://github.com/distante/ha-xplora-watch/issues?q=is%3Aissue+label%3Aenhancement).
         required: true
       - label: I have searched the documentation and this feature is not already available.
         required: true
