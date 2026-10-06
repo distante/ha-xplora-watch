@@ -206,6 +206,18 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
         # launching their own. This is the authoritative dedup; the cards' render-time guard is now
         # just a UX nicety on top of it. Keyed entries are removed as soon as the fetch settles.
         self._inflight_updates: dict[tuple[tuple[str, ...] | None, bool], asyncio.Task[dict[str, Any]]] = {}
+        # Serializes the fan-out itself. The coalescer above only merges callers with the SAME
+        # signature; two fetches with *different* signatures -- a scheduled poll (`targets=None`)
+        # racing a `see` for one watch, or two cards rendering different watches -- remain separate
+        # tasks. They would then interleave over the per-watch intermediates this object carries
+        # between the fetch helpers (`self.device`, `self.lat/lng`, `self.imei`, `self.battery`,
+        # `self.unread_msg`, `self.alarm`, `self.silent`, `self._step_day`, `self._xcoin`): the loop
+        # awaits the network between writing and reading them, so the second fetch overwrites the
+        # first watch's values before `get_data()` has copied them out, and one watch ends up
+        # showing another's steps, XCoins, silent times, unread count and IMEI. Running at most one
+        # fan-out at a time removes that window, and also keeps concurrent callers from doubling the
+        # request rate against a ban-sensitive account.
+        self._fetch_lock: asyncio.Lock = asyncio.Lock()
         # Centralized, single-flight token recovery (see `_with_recovery` / `_recover_token`). Every
         # controller call routes through `_with_recovery`, so an expired token is recovered at ONE
         # choke-point. `_token_recovery` is the in-flight recovery task: concurrent callers that hit
@@ -828,7 +840,18 @@ class XploraDataUpdateCoordinator(DataUpdateCoordinator):
         Split out of `async_update_xplora_data` so the coalescer there can share a single run of
         this across concurrent callers. Auth recovery is centralized in `_with_recovery`; this
         method only translates the typed exceptions it may surface into `UpdateFailed`.
+
+        Runs under `_fetch_lock`, so fetches with *different* signatures queue instead of
+        interleaving over the per-watch intermediates kept on this object (see `_fetch_lock`).
+        Waiting here is cheap next to the fan-out's own network time, and the lock is never held
+        across a callback into this method, so it cannot deadlock: token recovery (`_with_recovery`
+        -> `_recover_token`) only refreshes/re-logs the session, it never re-enters the fetch.
         """
+        async with self._fetch_lock:
+            return await self._fetch_and_store_xplora_data_locked(targets, force_functions)
+
+    async def _fetch_and_store_xplora_data_locked(self, targets: list[str] | None, force_functions: bool) -> dict[str, Any]:
+        """The fan-out body. Always called with `_fetch_lock` held."""
         watch_entry = {}
         if self.data:
             watch_entry.update(self.data)
